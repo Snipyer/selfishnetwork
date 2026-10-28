@@ -3,11 +3,7 @@
 A cross-platform (v1: **Linux**) tool for managing your own local network via ARP
 interception — discover devices, and cut or throttle their bandwidth.
 
-> ### ⚠️ Authorized use only
-> This tool performs ARP spoofing to position itself as a man-in-the-middle on
-> your LAN. Only use it on a network **you own or are explicitly authorized to
-> administer**. Intercepting traffic on networks you do not control is illegal in
-> most jurisdictions. You are responsible for how you use it.
+![SelfishNetwork device table](docs/screenshot.png)
 
 ## Architecture
 
