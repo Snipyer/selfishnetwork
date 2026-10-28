@@ -1,8 +1,14 @@
 //! ARP sweep discovery.
 //!
-//! We broadcast an ARP request for every host in the subnet and collect the
-//! replies. This is the one piece of the engine that's fully implemented in the
-//! scaffold — it gives the UI a real device list to work with.
+//! Discovery is deliberately belt-and-suspenders because Wi-Fi devices in
+//! power-save mode routinely ignore a single broadcast ARP request:
+//!   1. seed from the kernel neighbor table (`/proc/net/arp`) — instant for
+//!      anything the host already knows;
+//!   2. send several *paced* rounds of ARP requests over the whole subnet, so a
+//!      dozing phone gets another chance to answer (and we don't drop packets by
+//!      bursting 254 at once);
+//!   3. harvest the neighbor table again at the end, since the kernel also sees
+//!      the replies and may have learned hosts we missed.
 
 use super::NetCtx;
 use anyhow::{anyhow, Result};
@@ -12,9 +18,16 @@ use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::{MutablePacket, Packet};
 use pnet::util::MacAddr;
 use std::collections::HashSet;
+use std::fs;
 use std::io;
 use std::net::Ipv4Addr;
+use std::thread;
 use std::time::{Duration, Instant};
+
+/// How many ARP rounds to send during a sweep.
+const SWEEP_ROUNDS: u32 = 3;
+/// Brief pause after every this-many sends, to avoid overrunning the TX buffer.
+const PACE_EVERY: usize = 32;
 
 const ETH_HDR: usize = 14;
 const ARP_LEN: usize = 28;
@@ -64,44 +77,115 @@ fn is_timeout(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)
 }
 
-/// Sweep the whole subnet. Calls `on_found` once per responding host.
+/// Sweep the whole subnet. Calls `on_found` once per discovered host.
+///
+/// `window` is the total listening budget, split across [`SWEEP_ROUNDS`].
 pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
     ctx: &NetCtx,
-    overall_timeout: Duration,
+    window: Duration,
     mut on_found: F,
 ) -> Result<()> {
-    let (mut tx, mut rx) = channel(ctx, Duration::from_millis(200))?;
+    let (mut tx, mut rx) = channel(ctx, Duration::from_millis(100))?;
+    let mut seen: HashSet<Ipv4Addr> = HashSet::new();
 
-    for host in ctx.subnet_hosts() {
-        let pkt = build_arp(
-            ArpOperations::Request,
-            ctx.our_mac,
-            ctx.our_ip,
-            MacAddr::broadcast(),
-            MacAddr::zero(),
-            host,
-        );
-        if let Some(Err(e)) = tx.send_to(&pkt, None) {
-            return Err(anyhow!("failed to send ARP request: {e}"));
+    // 1. Anything the kernel already knows (skips our own address).
+    for (ip, mac) in neighbor_table(&ctx.iface.name) {
+        if ip != ctx.our_ip && seen.insert(ip) {
+            on_found(ip, mac);
         }
     }
 
-    let deadline = Instant::now() + overall_timeout;
-    let mut seen: HashSet<Ipv4Addr> = HashSet::new();
-    while Instant::now() < deadline {
-        match rx.next() {
-            Ok(frame) => {
-                if let Some((ip, mac)) = parse_arp_reply(frame, ctx.our_ip) {
-                    if seen.insert(ip) {
-                        on_found(ip, mac);
+    // 2. Several paced rounds, listening between each.
+    let hosts = ctx.subnet_hosts();
+    let per_round = window / SWEEP_ROUNDS.max(1);
+    for _ in 0..SWEEP_ROUNDS {
+        for (i, host) in hosts.iter().enumerate() {
+            let pkt = build_arp(
+                ArpOperations::Request,
+                ctx.our_mac,
+                ctx.our_ip,
+                MacAddr::broadcast(),
+                MacAddr::zero(),
+                *host,
+            );
+            if let Some(Err(e)) = tx.send_to(&pkt, None) {
+                return Err(anyhow!("failed to send ARP request: {e}"));
+            }
+            if i % PACE_EVERY == PACE_EVERY - 1 {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        let deadline = Instant::now() + per_round;
+        while Instant::now() < deadline {
+            match rx.next() {
+                Ok(frame) => {
+                    if let Some((ip, mac)) = parse_arp_reply(frame, ctx.our_ip) {
+                        if seen.insert(ip) {
+                            on_found(ip, mac);
+                        }
                     }
                 }
+                Err(ref e) if is_timeout(e) => continue,
+                Err(e) => return Err(anyhow!("recv error during scan: {e}")),
             }
-            Err(ref e) if is_timeout(e) => continue,
-            Err(e) => return Err(anyhow!("recv error during scan: {e}")),
+        }
+    }
+
+    // 3. Final harvest: the kernel may have learned hosts from the replies above.
+    for (ip, mac) in neighbor_table(&ctx.iface.name) {
+        if ip != ctx.our_ip && seen.insert(ip) {
+            on_found(ip, mac);
         }
     }
     Ok(())
+}
+
+/// Read completed entries for `iface` from the kernel's `/proc/net/arp`.
+fn neighbor_table(iface: &str) -> Vec<(Ipv4Addr, MacAddr)> {
+    match fs::read_to_string("/proc/net/arp") {
+        Ok(contents) => parse_neighbor_table(&contents, iface),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Parse `/proc/net/arp` text, keeping completed entries on `iface`.
+fn parse_neighbor_table(contents: &str, iface: &str) -> Vec<(Ipv4Addr, MacAddr)> {
+    let mut out = Vec::new();
+    // Columns: IP address, HW type, Flags, HW address, Mask, Device
+    for line in contents.lines().skip(1) {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 6 || cols[5] != iface {
+            continue;
+        }
+        // Flags 0x0 = incomplete; skip those and the null MAC.
+        if cols[2] == "0x0" || cols[3] == "00:00:00:00:00:00" {
+            continue;
+        }
+        if let (Ok(ip), Ok(mac)) = (cols[0].parse::<Ipv4Addr>(), cols[3].parse::<MacAddr>()) {
+            out.push((ip, mac));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_complete_entries_for_iface() {
+        let sample = "\
+IP address       HW type     Flags       HW address            Mask     Device
+192.168.1.1      0x1         0x2         1c:5f:2b:d2:42:36     *        enp5s0
+192.168.1.66     0x1         0x2         20:34:fb:a3:b9:e4     *        enp5s0
+192.168.1.99     0x1         0x0         00:00:00:00:00:00     *        enp5s0
+10.0.0.5         0x1         0x2         aa:bb:cc:dd:ee:ff     *        wlan0";
+        let got = parse_neighbor_table(sample, "enp5s0");
+        assert_eq!(got.len(), 2, "two complete enp5s0 entries");
+        assert!(got.contains(&("192.168.1.1".parse().unwrap(), "1c:5f:2b:d2:42:36".parse().unwrap())));
+        assert!(got.contains(&("192.168.1.66".parse().unwrap(), "20:34:fb:a3:b9:e4".parse().unwrap())));
+    }
 }
 
 /// Resolve a single IP to its MAC (e.g. the gateway), or `None` on timeout.
