@@ -19,8 +19,8 @@ export default function App() {
 				<header className="border-b border-border">
 					<div className="flex h-9 items-center px-2" style={{ WebkitAppRegion: 'drag' } as any}>
 						<div className="flex flex-1 items-center justify-center gap-2">
-							<img src={appIcon} alt="SelfishNet" className="size-4" />
-							<span className="text-xs font-medium tracking-tight">SelfishNet</span>
+							<img src={appIcon} alt="SelfishNetwork" className="size-4" />
+							<span className="text-xs font-medium tracking-tight">SelfishNetwork</span>
 						</div>
 						<div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as any}>
 							<Button

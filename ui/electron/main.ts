@@ -17,7 +17,7 @@ function createWindow() {
     minWidth: 820,
     minHeight: 520,
     backgroundColor: '#0e1116',
-    title: 'SelfishNet',
+    title: 'SelfishNetwork',
     frame: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     icon: iconPath,

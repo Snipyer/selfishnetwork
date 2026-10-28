@@ -1,4 +1,4 @@
-# SelfishNet
+# SelfishNetwork
 
 A cross-platform (v1: **Linux**) tool for managing your own local network via ARP
 interception — discover devices, and cut or throttle their bandwidth.

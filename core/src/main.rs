@@ -1,4 +1,4 @@
-//! SelfishNet core daemon entrypoint.
+//! SelfishNetwork core daemon entrypoint.
 
 mod config;
 mod engine;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
-/// Privileged network core for SelfishNet.
+/// Privileged network core for SelfishNetwork.
 #[derive(Parser, Debug)]
 #[command(name = "selfishnet-core", version)]
 struct Args {

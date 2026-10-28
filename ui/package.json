@@ -1,7 +1,7 @@
 {
   "name": "selfishnet-ui",
   "version": "0.1.0",
-  "description": "Electron + React UI for SelfishNet",
+  "description": "Electron + React UI for SelfishNetwork",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",

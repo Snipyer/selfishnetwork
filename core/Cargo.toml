@@ -2,7 +2,7 @@
 name = "selfishnet-core"
 version = "0.1.0"
 edition = "2021"
-description = "Privileged network core for SelfishNet: ARP discovery, MITM, userspace forwarding & throttling"
+description = "Privileged network core for SelfishNetwork: ARP discovery, MITM, userspace forwarding & throttling"
 license = "MIT"
 
 [[bin]]
