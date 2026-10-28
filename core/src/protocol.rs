@@ -13,6 +13,10 @@ pub enum Command {
     Intercept { ip: Ipv4Addr },
     /// Stop intercepting and restore the device's ARP cache.
     Release { ip: Ipv4Addr },
+    /// Begin MITM interception on all devices.
+    InterceptAll,
+    /// Stop intercepting all devices.
+    ReleaseAll,
     /// Fully block (or unblock) a device's traffic.
     Cut { ip: Ipv4Addr, enabled: bool },
     /// Rate-limit a device. `None` means unlimited in that direction.
@@ -23,6 +27,8 @@ pub enum Command {
     },
     /// Request a full snapshot of current state.
     Status,
+    /// Set or clear a nickname for a device (by MAC).
+    SetNickname { mac: String, nickname: Option<String> },
 }
 
 /// Events pushed by the core to the UI.
@@ -79,6 +85,8 @@ pub struct Device {
     pub hostname: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vendor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
     pub intercepted: bool,
     pub cut: bool,
     #[serde(skip_serializing_if = "Throttle::is_unlimited")]

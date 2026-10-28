@@ -15,6 +15,7 @@ export interface Device {
   mac: string
   hostname?: string
   vendor?: string
+  nickname?: string
   intercepted: boolean
   cut: boolean
   throttle?: Throttle
@@ -25,8 +26,11 @@ export type Command =
   | { cmd: 'status' }
   | { cmd: 'intercept'; ip: string }
   | { cmd: 'release'; ip: string }
+  | { cmd: 'intercept_all' }
+  | { cmd: 'release_all' }
   | { cmd: 'cut'; ip: string; enabled: boolean }
   | { cmd: 'throttle'; ip: string; down_kbps: number | null; up_kbps: number | null }
+  | { cmd: 'set_nickname'; mac: string; nickname: string | null }
 
 export type Event =
   | { event: 'hello'; iface: string; gateway: Endpoint; self: Endpoint }

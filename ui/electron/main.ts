@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,6 +8,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 
 function createWindow() {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'app-icon.png')
+    : path.join(__dirname, '../public/app-icon.png')
   const win = new BrowserWindow({
     width: 1100,
     height: 740,
@@ -15,12 +18,29 @@ function createWindow() {
     minHeight: 520,
     backgroundColor: '#0e1116',
     title: 'SelfishNet',
+    frame: false,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
       // Renderer only talks to localhost over WS; no node integration needed.
       nodeIntegration: false,
       contextIsolation: true,
     },
+  })
+
+  ipcMain.on('window:minimize', () => {
+    win.minimize()
+  })
+  ipcMain.on('window:maximize', () => {
+    if (win.isMaximized()) {
+      win.unmaximize()
+    } else {
+      win.maximize()
+    }
+  })
+  ipcMain.on('window:close', () => {
+    win.close()
   })
 
   if (DEV_URL) {

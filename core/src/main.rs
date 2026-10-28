@@ -1,5 +1,6 @@
 //! SelfishNet core daemon entrypoint.
 
+mod config;
 mod engine;
 mod net;
 mod protocol;

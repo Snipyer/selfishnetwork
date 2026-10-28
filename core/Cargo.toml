@@ -21,6 +21,8 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
 lto = true

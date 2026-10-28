@@ -109,6 +109,27 @@ where
                 d.throttle = Throttle::default();
             });
         }
+        Command::InterceptAll => {
+            let devices = app.snapshot();
+            for d in devices {
+                if let Ok(mac) = d.mac.parse() {
+                    if let Err(e) = app.engine.intercept(d.ip, mac) {
+                        let _ = e;
+                    }
+                    publish_update(app, d.ip, |dev| dev.intercepted = true);
+                }
+            }
+        }
+        Command::ReleaseAll => {
+            for d in app.snapshot() {
+                app.engine.release(d.ip);
+                publish_update(app, d.ip, |dev| {
+                    dev.intercepted = false;
+                    dev.cut = false;
+                    dev.throttle = Throttle::default();
+                });
+            }
+        }
         Command::Cut { ip, enabled } => {
             app.engine.set_cut(ip, enabled);
             publish_update(app, ip, |d| d.cut = enabled);
@@ -116,6 +137,30 @@ where
         Command::Throttle { ip, down_kbps, up_kbps } => {
             app.engine.set_throttle(ip, down_kbps, up_kbps);
             publish_update(app, ip, |d| d.throttle = Throttle { down_kbps, up_kbps });
+        }
+        Command::SetNickname { mac, nickname } => {
+            if let Some(updated) = app.set_nickname(&mac, nickname.clone()) {
+                // Also publish update for the IP if we can find it
+                app.broadcast(Event::DeviceUpdate { device: updated.clone() });
+                // Try to find by IP in snapshot
+                for d in app.snapshot() {
+                    if d.mac.eq_ignore_ascii_case(&mac) {
+                        app.broadcast(Event::DeviceUpdate { device: d });
+                        break;
+                    }
+                }
+            } else {
+                // Update any matching device in snapshot
+                let nick_trim = nickname.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+                for d in app.snapshot() {
+                    if d.mac.eq_ignore_ascii_case(&mac) {
+                        let mut dev = d.clone();
+                        dev.nickname = nick_trim.clone();
+                        app.broadcast(Event::DeviceUpdate { device: dev });
+                        break;
+                    }
+                }
+            }
         }
     }
     Ok(())
