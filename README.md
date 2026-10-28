@@ -1,13 +1,87 @@
 # SelfishNetwork
 
-A cross-platform (v1: **Linux**) tool for managing your own local network via ARP
-interception — discover devices, and cut or throttle their bandwidth.
+See every device on your local network and take control of it — **cut** a
+device off the internet entirely, or **throttle** it to a bandwidth limit you
+choose. All from a simple desktop app, no command line required.
 
 ![SelfishNetwork device table](docs/screenshot.png)
 
-## Architecture
+## What it does
 
-Two processes, split by privilege:
+- **Discover devices.** Scans your network and lists everything connected —
+  phones, laptops, TVs, consoles — with live upload/download graphs.
+- **Cut.** Flip a switch to drop a device off the internet. Flip it back to
+  restore access.
+- **Throttle.** Cap a device's bandwidth to a limit you set, so one device
+  can't hog the connection.
+- **Live stats.** Watch per-device bandwidth in real time.
+
+It works by sitting in the middle of your network's traffic (ARP interception),
+so you don't need to log into your router or change any router settings.
+
+> ⚠️ **Use it on networks you own or are allowed to manage.** Cutting or
+> throttling other people's devices without permission may be against the law
+> where you live and against your network's rules. You're responsible for how
+> you use it.
+
+## Install
+
+> **Linux only for now.** A Windows version is in progress but not yet usable —
+> see [For developers](#for-developers).
+
+Grab the latest build from the
+[**Releases**](https://github.com/Snipyer/selfishnetwork/releases) page. Two
+formats are available:
+
+### AppImage (portable, no install)
+
+Download `SelfishNetwork_<version>_amd64.AppImage`, make it executable, and run
+it:
+
+```bash
+chmod +x SelfishNetwork_*.AppImage
+./SelfishNetwork_*.AppImage
+```
+
+On first launch it asks for your password once (a graphical prompt) so it can
+grant itself the network permissions it needs. That's it.
+
+### Debian / Ubuntu (.deb)
+
+Download `SelfishNetwork_<version>_amd64.deb` and install it:
+
+```bash
+sudo dpkg -i SelfishNetwork_*.deb
+```
+
+Then launch **SelfishNetwork** from your applications menu.
+
+## Using it
+
+1. Open the app. It automatically finds your network and starts listing
+   devices — give it a few seconds to discover everything.
+2. Each device shows its name/address and live bandwidth.
+3. Use the **cut** switch to drop a device offline, or set a **throttle** limit
+   to cap its speed.
+4. Turn controls off to restore normal access. Everything is also restored
+   automatically when you close the app.
+
+## Status
+
+Fully working on Linux: device discovery, cut, throttle, and live bandwidth
+stats all work, and your network is cleanly restored when you release a device
+or exit.
+
+Windows is not usable yet — the app builds and installs, but the networking
+backend that actually controls devices is still being written.
+
+---
+
+## For developers
+
+SelfishNetwork is two processes split by privilege: a Rust **core daemon** that
+does the raw-socket network work, and a **Tauri + React UI** that talks to it
+over a localhost WebSocket.
 
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
@@ -30,9 +104,11 @@ Two processes, split by privilege:
   and a dev launcher.
 
 The WS message contract shared by both sides lives in
-[`docs/protocol.md`](docs/protocol.md).
+[`docs/protocol.md`](docs/protocol.md). For how the data plane works and its v1
+limits (IPv4-only forwarding, drop-based throttling), see
+[`core/README.md`](core/README.md#how-forwarding-works).
 
-## Quick start (dev)
+### Quick start (dev)
 
 ```bash
 # 1. build the core and grant it capabilities (asks for sudo once)
@@ -42,7 +118,7 @@ The WS message contract shared by both sides lives in
 ./scripts/dev.sh
 ```
 
-## Install (Linux)
+### Build from source (Linux)
 
 Build a `.deb` and an `.AppImage` — both bundle the compiled core daemon and
 grant it the required capabilities (the `.deb`'s postinstall script runs
@@ -67,7 +143,7 @@ Output lands in `ui/src-tauri/target/release/bundle/`:
   installs the binary to `/usr/bin`, the core to `/usr/lib/SelfishNetwork/bin`,
   and adds a desktop launcher.
 
-## Build (Windows)
+### Build (Windows)
 
 A Windows `.exe` installer cross-compiles from Linux. The networking backend is
 not implemented yet (it builds and errors at runtime — see
@@ -115,13 +191,7 @@ prerequisite.
 > **code-signing** (ideally an EV cert) and submitting the binary to Microsoft's
 > [false-positive portal](https://www.microsoft.com/en-us/wdsi/filesubmission).
 
-## Status
-
-Functional on Linux. Device discovery, ARP-spoof MITM, userspace forwarding,
-per-device **cut** and **throttle**, and live bandwidth stats all work; ARP
-caches and kernel sysctls are restored on release/exit. See
-[`core/README.md`](core/README.md#how-forwarding-works) for how the data plane
-works and its v1 limits (IPv4-only forwarding, drop-based throttling).
+### Windows port status
 
 Windows builds and installs, but the platform backend
 ([`core/src/platform/windows.rs`](core/src/platform/windows.rs)) is still a stub
