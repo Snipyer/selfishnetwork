@@ -141,22 +141,28 @@ fn spawn_core(bin: &PathBuf) -> std::io::Result<Child> {
     }
     // Tie the core's lifetime to ours: if the shell dies in any way the kernel
     // couldn't give us a chance to clean up after (a crash, SIGKILL, a yanked
-    // `tauri dev`), deliver SIGTERM to the core so it restores network state and
-    // exits — instead of lingering as an orphan that squats ws://127.0.0.1:8734
-    // and makes every future launch report the core unreachable.
+    // `tauri dev`), deliver a signal to the core so it restores network state
+    // and exits — instead of lingering as an orphan that squats
+    // ws://127.0.0.1:8734 and makes every future launch report the core
+    // unreachable.
+    //
+    // We use SIGINT, not SIGTERM: a core spawned from this (GTK/glib) shell does
+    // not install a SIGTERM handler (the inherited signal state swallows it), so
+    // SIGTERM would hard-kill it before it could restore ARP/forwarding — but
+    // SIGINT is caught, so the core's shutdown path runs. `stop_core` relies on
+    // the same signal for the orderly-close case.
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
         unsafe {
             cmd.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0) != 0
-                {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGINT as libc::c_ulong, 0, 0, 0) != 0 {
                     return Err(std::io::Error::last_os_error());
                 }
                 // Close the fork/exec race: if the shell already died before we
                 // armed the signal, we've been reparented to init — stop now.
                 if libc::getppid() == 1 {
-                    libc::raise(libc::SIGTERM);
+                    libc::raise(libc::SIGINT);
                 }
                 Ok(())
             });
@@ -191,15 +197,17 @@ fn start_core(app: &tauri::AppHandle) {
 ///
 /// A plain `kill()` is SIGKILL, which the core can't trap — it would die with
 /// the targets' ARP caches still poisoned and the host's IP-forwarding knobs
-/// still flipped. So on Unix we send SIGTERM (the core traps it and restores
+/// still flipped. So on Unix we send SIGINT (the core traps it and restores
 /// network state), wait briefly for it to exit, and only force-kill if it won't
-/// go. On other platforms we fall back to the hard kill.
+/// go. SIGINT rather than SIGTERM because a core spawned from this GTK shell
+/// doesn't catch SIGTERM (see `spawn_core`). On other platforms we fall back to
+/// the hard kill.
 fn stop_core(child: &mut Child) {
     #[cfg(unix)]
     {
         let pid = child.id() as libc::pid_t;
         unsafe {
-            libc::kill(pid, libc::SIGTERM);
+            libc::kill(pid, libc::SIGINT);
         }
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while std::time::Instant::now() < deadline {

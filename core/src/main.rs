@@ -117,11 +117,11 @@ async fn main() -> Result<()> {
     app.engine.start();
 
     // Restore ARP caches + forwarding controls before exiting on any orderly
-    // stop signal. Catching SIGTERM (not just Ctrl-C/SIGINT) matters because the
-    // desktop shell stops us with SIGTERM on app close, and the kernel sends us
-    // SIGTERM via PR_SET_PDEATHSIG if the shell dies unexpectedly — without this
-    // handler either case would leave the targets' ARP caches poisoned and the
-    // host's IP-forwarding knobs flipped.
+    // stop signal. The desktop shell stops us with SIGINT on app close, and the
+    // kernel sends us SIGINT via PR_SET_PDEATHSIG if the shell dies unexpectedly;
+    // SIGTERM is handled too for other launchers (e.g. systemd). Without this
+    // either case would leave the targets' ARP caches poisoned and the host's
+    // IP-forwarding knobs flipped.
     let shutdown = app.engine.clone();
     tokio::spawn(async move {
         shutdown_signal().await;
