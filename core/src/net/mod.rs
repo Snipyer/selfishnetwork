@@ -3,13 +3,12 @@
 pub mod arp;
 pub mod forward;
 pub mod scan;
-pub mod sysctl;
 
+use crate::platform::default_route;
 use anyhow::{anyhow, Context, Result};
 use pnet::datalink::{self, NetworkInterface};
 use pnet::ipnetwork::IpNetwork;
 use pnet::util::MacAddr;
-use std::fs;
 use std::net::Ipv4Addr;
 
 /// Everything the engine needs to know about where it's operating.
@@ -27,7 +26,7 @@ impl NetCtx {
     /// that carries the default route.
     pub fn resolve(iface_name: Option<&str>) -> Result<Self> {
         let (gateway_ip, default_iface) =
-            default_route().context("could not read default route from /proc/net/route")?;
+            default_route().context("could not determine the default route")?;
 
         let want = iface_name.unwrap_or(&default_iface);
         let iface = datalink::interfaces()
@@ -76,24 +75,31 @@ impl NetCtx {
         }
         hosts
     }
-}
 
-/// Parse `/proc/net/route` for the default gateway and its interface.
-fn default_route() -> Result<(Ipv4Addr, String)> {
-    let contents = fs::read_to_string("/proc/net/route")?;
-    for line in contents.lines().skip(1) {
-        let mut cols = line.split_whitespace();
-        let iface = cols.next().unwrap_or("");
-        let dest = cols.next().unwrap_or("");
-        let gw_hex = cols.next().unwrap_or("");
-        // Default route: destination 0.0.0.0.
-        if dest == "00000000" {
-            let raw = u32::from_str_radix(gw_hex, 16)
-                .map_err(|_| anyhow!("bad gateway field in route table"))?;
-            // Fields are little-endian hex.
-            let gw = Ipv4Addr::from(raw.to_be());
-            return Ok((gw, iface.to_string()));
+    /// A human-friendly label for the interface. On Windows the raw `name` is a
+    /// `\Device\NPF_{GUID}` string, so we prefer the adapter description; on
+    /// Linux the description is empty and the name (e.g. `enp5s0`) is friendly.
+    pub fn iface_label(&self) -> String {
+        let desc = self.iface.description.trim();
+        if desc.is_empty() {
+            self.iface.name.clone()
+        } else {
+            desc.to_string()
         }
     }
-    Err(anyhow!("no default route found"))
+
+    /// True if `ip` is a real unicast host on our subnet — i.e. a plausible
+    /// device. Filters out multicast/broadcast/loopback and the subnet's own
+    /// network and broadcast addresses, which otherwise leak in from the OS
+    /// neighbor table (e.g. `224.0.0.22`, `239.255.255.250` on Windows).
+    pub fn is_lan_host(&self, ip: Ipv4Addr) -> bool {
+        if ip.is_multicast() || ip.is_broadcast() || ip.is_unspecified() || ip.is_loopback() {
+            return false;
+        }
+        let mask = u32::from(self.netmask);
+        let network = u32::from(self.our_ip) & mask;
+        let broadcast = network | !mask;
+        let v = u32::from(ip);
+        (v & mask) == network && v != network && v != broadcast
+    }
 }

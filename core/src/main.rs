@@ -3,6 +3,7 @@
 mod config;
 mod engine;
 mod net;
+mod platform;
 mod protocol;
 mod state;
 mod ws;
@@ -33,21 +34,45 @@ struct Args {
     port: u16,
 }
 
+/// Logs to stderr and, so packaged (console-less) runs can be diagnosed, also
+/// to `<local-data>/SelfishNetwork/core.log` (e.g. `%LOCALAPPDATA%\SelfishNetwork`
+/// on Windows, `~/.local/share/SelfishNetwork` on Linux).
+fn init_tracing() {
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| "selfishnet_core=info".into());
+
+    let file_layer = dirs::data_local_dir().and_then(|base| {
+        let dir = base.join("SelfishNetwork");
+        std::fs::create_dir_all(&dir).ok()?;
+        let appender = tracing_appender::rolling::never(&dir, "core.log");
+        Some(fmt::layer().with_ansi(false).with_writer(appender))
+    });
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(file_layer)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "selfishnet_core=info".into()),
-        )
-        .init();
+    init_tracing();
 
     let args = Args::parse();
 
     let ctx = NetCtx::resolve(args.interface.as_deref())?;
     info!(
-        "interface {} | self {} ({}) | gateway {}",
-        ctx.iface.name, ctx.our_ip, ctx.our_mac, ctx.gateway_ip
+        "interface {} ({}) | self {} ({}) | netmask {} | gateway {} | {} candidate hosts",
+        ctx.iface.name,
+        ctx.iface_label(),
+        ctx.our_ip,
+        ctx.our_mac,
+        ctx.netmask,
+        ctx.gateway_ip,
+        ctx.subnet_hosts().len(),
     );
 
     // Resolve the gateway's MAC once; non-fatal if it times out.
@@ -69,7 +94,7 @@ async fn main() -> Result<()> {
     let app = Arc::new(App::new(ctx, gateway_mac));
     app.engine.start();
 
-    // Restore ARP caches + sysctls on Ctrl-C before exiting.
+    // Restore ARP caches + forwarding controls on Ctrl-C before exiting.
     let shutdown = app.engine.clone();
     tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {

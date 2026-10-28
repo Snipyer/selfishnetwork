@@ -15,8 +15,8 @@
 
 use crate::net::arp::{self, Peer};
 use crate::net::forward::TokenBucket;
-use crate::net::sysctl::SysctlGuard;
 use crate::net::NetCtx;
+use crate::platform::ForwardingGuard;
 use crate::protocol::Event;
 use anyhow::Result;
 use pnet::datalink::{self, Channel, Config};
@@ -79,7 +79,7 @@ struct Inner {
     gateway: Peer,
     targets: Mutex<HashMap<Ipv4Addr, Target>>,
     known_macs: Mutex<HashMap<Ipv4Addr, MacAddr>>,
-    sysctl: Mutex<Option<SysctlGuard>>,
+    forwarding: Mutex<Option<ForwardingGuard>>,
     events: broadcast::Sender<Event>,
     running: AtomicBool,
 }
@@ -100,7 +100,7 @@ impl Engine {
             ctx,
             targets: Mutex::new(HashMap::new()),
             known_macs: Mutex::new(HashMap::new()),
-            sysctl: Mutex::new(None),
+            forwarding: Mutex::new(None),
             events,
             running: AtomicBool::new(true),
         });
@@ -129,14 +129,14 @@ impl Engine {
         self.inner.known_macs.lock().unwrap().insert(ip, mac);
     }
 
-    /// Begin intercepting `ip`. Applies the sysctl guard on the first target.
+    /// Begin intercepting `ip`. Engages forwarding controls on the first target.
     pub fn intercept(&self, ip: Ipv4Addr, mac: MacAddr) -> Result<()> {
         {
             let mut targets = self.inner.targets.lock().unwrap();
-            if targets.is_empty() && self.inner.sysctl.lock().unwrap().is_none() {
-                let guard = SysctlGuard::apply(&self.inner.ctx.iface.name)?;
-                *self.inner.sysctl.lock().unwrap() = Some(guard);
-                info!("userspace forwarding engaged (ip_forward/send_redirects off)");
+            if targets.is_empty() && self.inner.forwarding.lock().unwrap().is_none() {
+                let guard = ForwardingGuard::apply(&self.inner.ctx.iface.name)?;
+                *self.inner.forwarding.lock().unwrap() = Some(guard);
+                info!("userspace forwarding engaged (kernel forwarding/redirects off)");
             }
             targets
                 .entry(ip)
@@ -157,8 +157,8 @@ impl Engine {
         Ok(())
     }
 
-    /// Stop intercepting `ip`, restore its ARP cache, and lift the sysctl guard
-    /// once no targets remain.
+    /// Stop intercepting `ip`, restore its ARP cache, and lift the forwarding
+    /// controls once no targets remain.
     pub fn release(&self, ip: Ipv4Addr) {
         let removed = self.inner.targets.lock().unwrap().remove(&ip);
         if let Some(t) = removed {
@@ -166,7 +166,7 @@ impl Engine {
             info!("released {ip}");
         }
         if self.inner.targets.lock().unwrap().is_empty() {
-            if let Some(mut g) = self.inner.sysctl.lock().unwrap().take() {
+            if let Some(mut g) = self.inner.forwarding.lock().unwrap().take() {
                 g.restore();
                 info!("userspace forwarding disengaged");
             }
@@ -186,7 +186,8 @@ impl Engine {
         }
     }
 
-    /// Restore every target's ARP cache and all sysctls. Call on shutdown.
+    /// Restore every target's ARP cache and all forwarding controls. Call on
+    /// shutdown.
     pub fn shutdown(&self) {
         self.inner.running.store(false, Ordering::SeqCst);
         let drained: HashMap<Ipv4Addr, Target> =
@@ -194,10 +195,10 @@ impl Engine {
         for (ip, t) in drained {
             let _ = arp::restore(&self.inner.ctx, Peer { ip, mac: t.mac }, self.inner.gateway);
         }
-        if let Some(mut g) = self.inner.sysctl.lock().unwrap().take() {
+        if let Some(mut g) = self.inner.forwarding.lock().unwrap().take() {
             g.restore();
         }
-        info!("engine shut down; ARP and sysctls restored");
+        info!("engine shut down; ARP and forwarding controls restored");
     }
 }
 

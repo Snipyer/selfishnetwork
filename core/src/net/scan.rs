@@ -15,14 +15,15 @@
 //!      the replies and may have learned hosts we missed.
 
 use super::NetCtx;
+use crate::platform::neighbor_table;
 use anyhow::{anyhow, Result};
+use tracing::info;
 use pnet::datalink::{self, Channel, Config};
 use pnet::packet::arp::{ArpHardwareTypes, ArpOperation, ArpOperations, ArpPacket, MutableArpPacket};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
 use pnet::packet::{MutablePacket, Packet};
 use pnet::util::MacAddr;
 use std::collections::HashSet;
-use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::thread;
@@ -91,10 +92,36 @@ fn prod_kernel_arp(hosts: &[Ipv4Addr]) {
     let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
         return;
     };
+
+    // Windows: by default, when a UDP socket gets an ICMP "port/host
+    // unreachable" (which the many non-existent IPs in a /24 sweep provoke), the
+    // *next* send fails with WSAECONNRESET. That aborts the prod partway, so most
+    // hosts never get ARP-resolved and discovery misses them. Disable it.
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{SIO_UDP_CONNRESET, WSAIoctl};
+        let disable: u32 = 0;
+        let mut returned: u32 = 0;
+        unsafe {
+            WSAIoctl(
+                sock.as_raw_socket() as usize,
+                SIO_UDP_CONNRESET,
+                &disable as *const u32 as *const core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+                core::ptr::null_mut(),
+                0,
+                &mut returned,
+                core::ptr::null_mut(),
+                None,
+            );
+        }
+    }
+
     for host in hosts {
-        // Port 9 (discard); the payload is irrelevant, the ARP side effect is
-        // the whole point.
-        let _ = sock.send_to(&[], SocketAddrV4::new(*host, 9));
+        // Port 9 (discard); the payload is irrelevant — the ARP resolution the
+        // kernel must do before it can send is the whole point.
+        let _ = sock.send_to(&[0u8], SocketAddrV4::new(*host, 9));
     }
 }
 
@@ -110,9 +137,13 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
     let mut seen: HashSet<Ipv4Addr> = HashSet::new();
 
     // 1. Anything the kernel already knows (skips our own address).
-    for (ip, mac) in neighbor_table(&ctx.iface.name) {
-        if ip != ctx.our_ip && seen.insert(ip) {
+    let seed = neighbor_table(&ctx.iface.name);
+    let seed_raw = seed.len();
+    let mut seeded = 0usize;
+    for (ip, mac) in seed {
+        if ip != ctx.our_ip && ctx.is_lan_host(ip) && seen.insert(ip) {
             on_found(ip, mac);
+            seeded += 1;
         }
     }
 
@@ -123,6 +154,7 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
     prod_kernel_arp(&hosts);
 
     // 3. Several paced rounds, listening between each.
+    let mut replies = 0usize;
     let per_round = window / SWEEP_ROUNDS.max(1);
     for _ in 0..SWEEP_ROUNDS {
         for (i, host) in hosts.iter().enumerate() {
@@ -147,8 +179,9 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
             match rx.next() {
                 Ok(frame) => {
                     if let Some((ip, mac)) = parse_arp_reply(frame, ctx.our_ip) {
-                        if seen.insert(ip) {
+                        if ctx.is_lan_host(ip) && seen.insert(ip) {
                             on_found(ip, mac);
+                            replies += 1;
                         }
                     }
                 }
@@ -158,61 +191,48 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
         }
     }
 
-    // 4. Final harvest: the kernel may have learned hosts from the replies above
-    //    and from the UDP-prodded resolutions.
-    for (ip, mac) in neighbor_table(&ctx.iface.name) {
-        if ip != ctx.our_ip && seen.insert(ip) {
+    // 4. Resolve stragglers. On Windows, raw ARP injection over Wi-Fi yields
+    //    nothing, so resolve each host through the OS via SendARP. On Linux the
+    //    raw sweep works, so just re-prod the kernel and let it settle.
+    #[allow(unused_mut)]
+    let mut resolved = 0usize;
+    #[cfg(windows)]
+    for (ip, mac) in crate::platform::active_resolve(&hosts) {
+        if ip != ctx.our_ip && ctx.is_lan_host(ip) && seen.insert(ip) {
             on_found(ip, mac);
+            resolved += 1;
         }
     }
+    #[cfg(not(windows))]
+    {
+        prod_kernel_arp(&hosts);
+        thread::sleep(Duration::from_millis(600));
+    }
+
+    // 5. Final harvest: the kernel may have learned hosts from the replies above
+    //    and from the UDP-prodded resolutions.
+    let harvest = neighbor_table(&ctx.iface.name);
+    let harvest_raw = harvest.len();
+    let mut harvested = 0usize;
+    for (ip, mac) in harvest {
+        if ip != ctx.our_ip && ctx.is_lan_host(ip) && seen.insert(ip) {
+            on_found(ip, mac);
+            harvested += 1;
+        }
+    }
+
+    info!(
+        "scan done: {} candidate hosts swept | neighbor cache raw {}→{} seeded, {}→{} harvested | {} arp replies | {} os-resolved | {} devices total",
+        hosts.len(),
+        seed_raw,
+        seeded,
+        harvest_raw,
+        harvested,
+        replies,
+        resolved,
+        seen.len(),
+    );
     Ok(())
-}
-
-/// Read completed entries for `iface` from the kernel's `/proc/net/arp`.
-fn neighbor_table(iface: &str) -> Vec<(Ipv4Addr, MacAddr)> {
-    match fs::read_to_string("/proc/net/arp") {
-        Ok(contents) => parse_neighbor_table(&contents, iface),
-        Err(_) => Vec::new(),
-    }
-}
-
-/// Parse `/proc/net/arp` text, keeping completed entries on `iface`.
-fn parse_neighbor_table(contents: &str, iface: &str) -> Vec<(Ipv4Addr, MacAddr)> {
-    let mut out = Vec::new();
-    // Columns: IP address, HW type, Flags, HW address, Mask, Device
-    for line in contents.lines().skip(1) {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() < 6 || cols[5] != iface {
-            continue;
-        }
-        // Flags 0x0 = incomplete; skip those and the null MAC.
-        if cols[2] == "0x0" || cols[3] == "00:00:00:00:00:00" {
-            continue;
-        }
-        if let (Ok(ip), Ok(mac)) = (cols[0].parse::<Ipv4Addr>(), cols[3].parse::<MacAddr>()) {
-            out.push((ip, mac));
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_complete_entries_for_iface() {
-        let sample = "\
-IP address       HW type     Flags       HW address            Mask     Device
-192.168.1.1      0x1         0x2         1c:5f:2b:d2:42:36     *        enp5s0
-192.168.1.66     0x1         0x2         20:34:fb:a3:b9:e4     *        enp5s0
-192.168.1.99     0x1         0x0         00:00:00:00:00:00     *        enp5s0
-10.0.0.5         0x1         0x2         aa:bb:cc:dd:ee:ff     *        wlan0";
-        let got = parse_neighbor_table(sample, "enp5s0");
-        assert_eq!(got.len(), 2, "two complete enp5s0 entries");
-        assert!(got.contains(&("192.168.1.1".parse().unwrap(), "1c:5f:2b:d2:42:36".parse().unwrap())));
-        assert!(got.contains(&("192.168.1.66".parse().unwrap(), "20:34:fb:a3:b9:e4".parse().unwrap())));
-    }
 }
 
 /// Resolve a single IP to its MAC (e.g. the gateway), or `None` on timeout.
@@ -244,7 +264,13 @@ pub fn resolve_mac(ctx: &NetCtx, target: Ipv4Addr, timeout: Duration) -> Result<
             Err(e) => return Err(anyhow!("recv error: {e}")),
         }
     }
-    Ok(None)
+    // Active ARP timed out (common on Wi-Fi, where the gateway may not answer
+    // our raw request). Fall back to the OS neighbor cache, which usually
+    // already knows the MAC.
+    Ok(neighbor_table(&ctx.iface.name)
+        .into_iter()
+        .find(|(ip, _)| *ip == target)
+        .map(|(_, mac)| mac))
 }
 
 /// Extract (sender_ip, sender_mac) from an ARP reply frame, skipping our own.

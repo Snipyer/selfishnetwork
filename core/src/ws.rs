@@ -42,7 +42,7 @@ async fn handle(stream: TcpStream, app: Arc<App>) -> Result<()> {
     send(
         &mut write,
         &Event::Hello {
-            iface: app.ctx.iface.name.clone(),
+            iface: app.ctx.iface_label(),
             gateway: app.gateway.clone(),
             own: app.own.clone(),
         },
@@ -174,7 +174,7 @@ fn run_scan(app: &Arc<App>) {
         let ctx = app.ctx.clone();
         let sweep_app = app.clone();
         let result = tokio::task::spawn_blocking(move || {
-            scan::arp_sweep(&ctx, Duration::from_secs(4), |ip, mac| {
+            scan::arp_sweep(&ctx, Duration::from_secs(6), |ip, mac| {
                 sweep_app.engine.note_mac(ip, mac);
                 let device = sweep_app.upsert(ip, mac);
                 sweep_app.broadcast(Event::Device { device });
