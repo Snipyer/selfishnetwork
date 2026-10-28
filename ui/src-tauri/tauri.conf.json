@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SelfishNetwork",
+  "version": "0.1.0",
+  "identifier": "com.selfishnet.app",
+  "build": {
+    "devUrl": "http://localhost:5473",
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SelfishNetwork",
+        "width": 1100,
+        "height": 740,
+        "minWidth": 820,
+        "minHeight": 520,
+        "decorations": false,
+        "backgroundColor": "#0e1116"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Utility",
+    "shortDescription": "Manage your own local network",
+    "longDescription": "Discover devices on your local network via ARP interception, and cut or throttle their bandwidth.",
+    "resources": {
+      "../../core/target/release/selfishnet-core": "bin/selfishnet-core"
+    },
+    "linux": {
+      "deb": {
+        "postInstallScript": "../build/deb-after-install.sh",
+        "preRemoveScript": "../build/deb-after-remove.sh"
+      }
+    }
+  }
+}

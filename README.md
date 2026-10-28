@@ -11,7 +11,7 @@ Two processes, split by privilege:
 
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
-│  Electron UI (unprivileged) │  WS    │  Rust core daemon (root-ish)  │
+│  Tauri UI (unprivileged)    │  WS    │  Rust core daemon (root-ish)  │
 │  React + TS + Vite          │◄──────►│  net_raw/net_admin/dac_override│
 │  device list, live graphs   │ JSON   │  ARP scan · ARP spoof (MITM)  │
 │  cut / throttle controls    │ :8734  │  userspace fwd · token bucket │
@@ -22,8 +22,10 @@ Two processes, split by privilege:
   bidirectional ARP spoofing, userspace L2 forwarding with a per-device token
   bucket (cut = stop forwarding). Serves a localhost WebSocket. See
   [`core/README.md`](core/README.md).
-- **`ui/`** — Electron + React/TypeScript. Runs as your user, connects only to
-  `127.0.0.1:8734`, never touches raw sockets.
+- **`ui/`** — Tauri shell (Rust, in `ui/src-tauri/`) wrapping a React/TypeScript
+  frontend rendered in the system webview. Runs as your user, connects only to
+  `127.0.0.1:8734`, never touches raw sockets. The shell also auto-starts the
+  core daemon so you never launch it by hand.
 - **`scripts/`** — `setcap` installer so the core runs without a password prompt,
   and a dev launcher.
 
@@ -43,22 +45,27 @@ The WS message contract shared by both sides lives in
 ## Install (Linux)
 
 Build a `.deb` and an `.AppImage` — both bundle the compiled core daemon and
-grant it the required capabilities automatically (the `.deb`'s postinstall
-script runs `setcap`; see `ui/build/deb-after-install.sh`):
+grant it the required capabilities (the `.deb`'s postinstall script runs
+`setcap`; see `ui/build/deb-after-install.sh`). The AppImage build needs
+`patchelf` on the build host (`sudo apt install patchelf`):
 
 ```bash
 cd core && cargo build --release && cd ..
 cd ui && npm install && npm run dist:linux
 ```
 
-Output lands in `ui/release/`:
+Output lands in `ui/src-tauri/target/release/bundle/`:
 
-- `SelfishNetwork-<version>.AppImage` — portable, no install step. Capabilities
-  aren't set automatically for it (the squashfs is read-only); if ARP
-  spoofing/forwarding doesn't start, extract it once (`./SelfishNetwork-*.AppImage --appimage-extract`)
-  and run `sudo setcap cap_net_raw,cap_net_admin,cap_dac_override+ep squashfs-root/resources/bin/selfishnet-core`.
-- `selfishnet-ui_<version>_amd64.deb` — `sudo dpkg -i ui/release/selfishnet-ui_*.deb`
-  installs to `/opt/SelfishNetwork` and adds a desktop launcher.
+- `appimage/SelfishNetwork_<version>_amd64.AppImage` — portable, no install
+  step. The squashfs is read-only so it can't be `setcap`'d in place; instead
+  the app copies the core to a writable per-user location on first launch and
+  grants it capabilities via a one-time graphical `pkexec` prompt. If you'd
+  rather do it by hand, extract it once
+  (`./SelfishNetwork_*.AppImage --appimage-extract`) and run
+  `sudo setcap cap_net_raw,cap_net_admin,cap_dac_override+ep squashfs-root/usr/lib/SelfishNetwork/bin/selfishnet-core`.
+- `deb/SelfishNetwork_<version>_amd64.deb` — `sudo dpkg -i ui/src-tauri/target/release/bundle/deb/SelfishNetwork_*.deb`
+  installs the binary to `/usr/bin`, the core to `/usr/lib/SelfishNetwork/bin`,
+  and adds a desktop launcher.
 
 ## Status
 

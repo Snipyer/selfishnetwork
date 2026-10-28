@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Command, Device, Endpoint, Event } from './protocol'
+import { CORE_URL } from './shell'
 
-const CORE_URL = window.selfishnet?.coreUrl ?? 'ws://127.0.0.1:8734'
 const RECONNECT_MS = 1500
 
 export interface Stats {

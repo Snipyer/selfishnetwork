@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Launch the core daemon and the Electron/Vite UI together for development.
-# Assumes the core is already built + setcap'd (run scripts/setcap-core.sh once).
+# Launch the SelfishNetwork desktop app in development. Tauri runs the Vite dev
+# server (beforeDevCommand) and the Rust shell auto-starts the core daemon, so
+# this just checks the core is built + setcap'd, then hands off to `tauri dev`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,12 +12,7 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-echo "==> Starting core…"
-"$BIN" "$@" &
-CORE_PID=$!
-trap 'kill "$CORE_PID" 2>/dev/null || true' EXIT
-
-echo "==> Starting UI…"
 cd "$ROOT/ui"
 [ -d node_modules ] || npm install
-npm run dev
+echo "==> Starting SelfishNetwork (Tauri dev)…"
+npm run tauri dev

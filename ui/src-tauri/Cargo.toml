@@ -1,0 +1,22 @@
+[package]
+name = "selfishnet-ui"
+version = "0.1.0"
+description = "SelfishNetwork desktop shell"
+authors = ["Snipyer <snipyergaming@gmail.com>"]
+edition = "2021"
+
+# The library holds all app logic so the same code path works on every target;
+# main.rs is a thin launcher. See lib.rs::run().
+[lib]
+name = "selfishnet_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+lto = true
+codegen-units = 1

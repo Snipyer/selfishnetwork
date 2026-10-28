@@ -1,6 +1,7 @@
 import { RadarIcon, TriangleAlertIcon, OctagonAlertIcon, SunIcon, MoonIcon, MinusIcon, SquareIcon, XIcon } from 'lucide-react'
 import { useCore } from './lib/useCore'
 import { useTheme } from './lib/useTheme'
+import { shell, CORE_URL } from './lib/shell'
 import { cn } from './lib/utils'
 import { DeviceTable } from './components/DeviceTable'
 import { Button } from './components/ui/button'
@@ -17,17 +18,17 @@ export default function App() {
 		<TooltipProvider>
 			<div className="flex h-screen flex-col bg-background text-foreground">
 				<header className="border-b border-border">
-					<div className="flex h-9 items-center px-2" style={{ WebkitAppRegion: 'drag' } as any}>
+					<div className="flex h-9 items-center px-2" data-tauri-drag-region>
 						<div className="flex flex-1 items-center justify-center gap-2">
 							<img src={appIcon} alt="SelfishNetwork" className="size-4" />
 							<span className="text-xs font-medium tracking-tight">SelfishNetwork</span>
 						</div>
-						<div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as any}>
+						<div className="flex items-center gap-1">
 							<Button
 								variant="ghost"
 								size="icon"
 								aria-label="Minimize"
-								onClick={() => (window as any).selfishnet?.minimize?.()}
+								onClick={() => shell.minimize()}
 							>
 								<MinusIcon />
 							</Button>
@@ -35,7 +36,7 @@ export default function App() {
 								variant="ghost"
 								size="icon"
 								aria-label="Maximize"
-								onClick={() => (window as any).selfishnet?.maximize?.()}
+								onClick={() => shell.maximize()}
 							>
 								<SquareIcon />
 							</Button>
@@ -43,7 +44,7 @@ export default function App() {
 								variant="ghost"
 								size="icon"
 								aria-label="Close"
-								onClick={() => (window as any).selfishnet?.close?.()}
+								onClick={() => shell.close()}
 							>
 								<XIcon />
 							</Button>
@@ -87,7 +88,7 @@ export default function App() {
 							<AlertDescription>
 								Can&rsquo;t reach the core daemon at{' '}
 								<code className="mono rounded-none bg-muted px-1 py-0.5">
-									{window.selfishnet?.coreUrl ?? 'ws://127.0.0.1:8734'}
+									{CORE_URL}
 								</code>
 								. Start it with{' '}
 								<code className="mono rounded-none bg-muted px-1 py-0.5">

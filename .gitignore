@@ -1,12 +1,13 @@
 # Rust
 /core/target
+/ui/src-tauri/target
+*/release
+# Tauri (generated schemas/capabilities)
+/ui/src-tauri/gen
 
-# Node / Electron
+# Node / frontend
 node_modules/
 /ui/dist
-/ui/dist-electron
-/ui/out
-/ui/release
 *.log
 
 # OS / editor
