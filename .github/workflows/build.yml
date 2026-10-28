@@ -1,0 +1,139 @@
+name: Build apps
+
+# Manual-only: trigger from the Actions tab (Run workflow).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (AppImage + deb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's Linux webview toolchain + patchelf (AppImage) and deb tooling.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            file \
+            build-essential
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            ui/src-tauri
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The core daemon is bundled as a resource by the UI build, so it must
+      # exist first (resources.linux.json points at core/target/release).
+      - name: Build core daemon
+        working-directory: core
+        run: cargo build --release
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build Linux bundles
+        working-directory: ui
+        run: npm run dist:linux
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfishnet-linux
+          if-no-files-found: error
+          path: |
+            ui/src-tauri/target/release/bundle/appimage/*.AppImage
+            ui/src-tauri/target/release/bundle/deb/*.deb
+
+  windows:
+    name: Windows (NSIS, cross-compiled)
+    runs-on: ubuntu-latest
+    env:
+      # Npcap SDK version to link the core against (Packet.lib / wpcap.lib).
+      NPCAP_SDK_VERSION: "1.13"
+    steps:
+      - uses: actions/checkout@v4
+
+      # NSIS for the installer; clang/llvm back the cargo-xwin cross toolchain.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis clang llvm
+
+      - name: Install Rust (MSVC target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-msvc
+          workspaces: |
+            core
+            ui/src-tauri
+
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --locked
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # pnet load-time-links against the Npcap import libs; point the core
+      # build at Lib/x64 via RUSTFLAGS (see README "Build (Windows)").
+      - name: Fetch Npcap SDK
+        run: |
+          curl -fL -o npcap-sdk.zip \
+            "https://npcap.com/dist/npcap-sdk-${NPCAP_SDK_VERSION}.zip"
+          unzip -q npcap-sdk.zip -d "$GITHUB_WORKSPACE/npcap-sdk"
+
+      - name: Build core daemon (Windows)
+        working-directory: core
+        env:
+          RUSTFLAGS: "-L native=${{ github.workspace }}/npcap-sdk/Lib/x64"
+        run: cargo xwin build --release --target x86_64-pc-windows-msvc
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build Windows installer
+        working-directory: ui
+        run: npm run dist:windows
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfishnet-windows
+          if-no-files-found: error
+          path: ui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
