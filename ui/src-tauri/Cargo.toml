@@ -23,6 +23,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Graphics_Dwm",
 ] }
 
+# Used to stop the core gracefully (SIGTERM) and to tie its lifetime to ours
+# via PR_SET_PDEATHSIG, so it can never be orphaned onto the control port.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 lto = true
 codegen-units = 1

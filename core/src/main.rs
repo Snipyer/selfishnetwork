@@ -57,6 +57,28 @@ fn init_tracing() {
         .init();
 }
 
+/// Resolves when the process is asked to stop. On Unix that's SIGTERM or SIGINT
+/// (the shell uses SIGTERM; Ctrl-C from a terminal is SIGINT); elsewhere it's
+/// the platform's Ctrl-C / close event.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        // If a handler can't be installed we still want Ctrl-C to work, so fall
+        // back to a future that never resolves for the missing one.
+        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
@@ -94,14 +116,18 @@ async fn main() -> Result<()> {
     let app = Arc::new(App::new(ctx, gateway_mac));
     app.engine.start();
 
-    // Restore ARP caches + forwarding controls on Ctrl-C before exiting.
+    // Restore ARP caches + forwarding controls before exiting on any orderly
+    // stop signal. Catching SIGTERM (not just Ctrl-C/SIGINT) matters because the
+    // desktop shell stops us with SIGTERM on app close, and the kernel sends us
+    // SIGTERM via PR_SET_PDEATHSIG if the shell dies unexpectedly — without this
+    // handler either case would leave the targets' ARP caches poisoned and the
+    // host's IP-forwarding knobs flipped.
     let shutdown = app.engine.clone();
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            info!("shutting down…");
-            shutdown.shutdown();
-            std::process::exit(0);
-        }
+        shutdown_signal().await;
+        info!("shutting down…");
+        shutdown.shutdown();
+        std::process::exit(0);
     });
 
     let bind = SocketAddr::new(args.bind, args.port);

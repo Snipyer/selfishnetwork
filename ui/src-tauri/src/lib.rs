@@ -5,12 +5,19 @@
 // user never has to start it by hand. The renderer talks to the daemon over a
 // localhost WebSocket (ws://127.0.0.1:8734) and never touches raw sockets.
 
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use tauri::path::BaseDirectory;
 use tauri::{Manager, RunEvent};
+
+// The control-plane port the core serves and the UI connects to; kept in sync
+// with ui/src/lib/shell.ts (CORE_URL) and the core's default --port.
+const CORE_PORT: u16 = 8734;
 
 // cap_net_raw      — open AF_PACKET raw sockets (capture/inject).
 // cap_net_admin    — network admin bits used around raw sockets.
@@ -25,8 +32,13 @@ const CORE_BIN: &str = "selfishnet-core.exe";
 const CORE_BIN: &str = "selfishnet-core";
 
 /// Holds the auto-started core daemon so it can be killed when the app exits.
+/// `shutting_down` tells the supervisor thread (see `supervise_core`) to stop
+/// respawning once the app is tearing down.
 #[derive(Default)]
-struct CoreProcess(Mutex<Option<Child>>);
+struct CoreProcess {
+    child: Mutex<Option<Child>>,
+    shutting_down: AtomicBool,
+}
 
 /// Resolves the core daemon binary, mirroring Electron's `app.isPackaged`
 /// split. In a packaged build it's the bundled resource, which the deb
@@ -106,16 +118,18 @@ fn ensure_runnable_core_binary(app: &tauri::AppHandle) -> Option<PathBuf> {
     Some(dest)
 }
 
-/// Launches the bundled core daemon. If another instance is already listening
-/// on the port (e.g. started via scripts/dev.sh), the spawned process just
-/// fails to bind and exits — the UI talks to whichever one got there first.
-fn start_core(app: &tauri::AppHandle) {
-    let Some(bin) = ensure_runnable_core_binary(app) else {
-        eprintln!("[core] binary not found, skipping auto-start");
-        return;
-    };
+/// True if something is already accepting connections on the core's port — a
+/// core started via scripts/dev.sh, an orphaned daemon from a previous run, or
+/// the one we spawned ourselves. We adopt it rather than fighting over the port.
+fn core_port_served() -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], CORE_PORT));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
+}
 
-    let mut cmd = Command::new(&bin);
+/// Spawns one core daemon process with the shell's stdio, so packaged runs log
+/// through to the parent (and `core.log`).
+fn spawn_core(bin: &PathBuf) -> std::io::Result<Child> {
+    let mut cmd = Command::new(bin);
     cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     // The core is a console binary; without this it pops a visible console
     // window when launched from the (windowed) shell on Windows.
@@ -125,12 +139,126 @@ fn start_core(app: &tauri::AppHandle) {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-
-    match cmd.spawn() {
-        Ok(child) => {
-            *app.state::<CoreProcess>().0.lock().unwrap() = Some(child);
+    // Tie the core's lifetime to ours: if the shell dies in any way the kernel
+    // couldn't give us a chance to clean up after (a crash, SIGKILL, a yanked
+    // `tauri dev`), deliver SIGTERM to the core so it restores network state and
+    // exits — instead of lingering as an orphan that squats ws://127.0.0.1:8734
+    // and makes every future launch report the core unreachable.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0) != 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // Close the fork/exec race: if the shell already died before we
+                // armed the signal, we've been reparented to init — stop now.
+                if libc::getppid() == 1 {
+                    libc::raise(libc::SIGTERM);
+                }
+                Ok(())
+            });
         }
-        Err(e) => eprintln!("[core] failed to start: {e}"),
+    }
+    cmd.spawn()
+}
+
+/// Starts the core daemon and keeps it running for the app's lifetime.
+///
+/// A one-shot spawn is fragile: if any other process is already bound to the
+/// port when we launch (commonly an orphaned daemon left behind by a previous
+/// `tauri dev`/app run), our core exits with "address already in use" and the
+/// UI is stuck on "core unreachable" forever — the app only works while some
+/// *other* core happens to be alive. Instead we supervise:
+///
+///   * if the port is already served, adopt that core and don't spawn (no
+///     spinning on a port conflict with a dev-stack core);
+///   * otherwise spawn our own and wait for it;
+///   * when it (or an adopted core) goes away, reclaim the port by spawning
+///     again. Paired with the UI's auto-reconnect, the app self-heals.
+fn start_core(app: &tauri::AppHandle) {
+    let Some(bin) = ensure_runnable_core_binary(app) else {
+        eprintln!("[core] binary not found, skipping auto-start");
+        return;
+    };
+    let app = app.clone();
+    std::thread::spawn(move || supervise_core(app, bin));
+}
+
+/// Stops the core we spawned, giving it a chance to undo what it applied.
+///
+/// A plain `kill()` is SIGKILL, which the core can't trap — it would die with
+/// the targets' ARP caches still poisoned and the host's IP-forwarding knobs
+/// still flipped. So on Unix we send SIGTERM (the core traps it and restores
+/// network state), wait briefly for it to exit, and only force-kill if it won't
+/// go. On other platforms we fall back to the hard kill.
+fn stop_core(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id() as libc::pid_t;
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(_)) => return, // exited cleanly after restoring state
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(_) => break,
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn supervise_core(app: tauri::AppHandle, bin: PathBuf) {
+    let state = app.state::<CoreProcess>();
+    loop {
+        if state.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
+
+        // Someone's already serving (dev stack, or a core we can't see as our
+        // child). Leave it be and re-check periodically.
+        if core_port_served() {
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+
+        match spawn_core(&bin) {
+            Ok(child) => {
+                *state.child.lock().unwrap() = Some(child);
+                // Poll for exit rather than a blocking wait(), so the Exit
+                // handler can take and kill the child out from under us.
+                loop {
+                    if state.shutting_down.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let mut guard = state.child.lock().unwrap();
+                    match guard.as_mut() {
+                        Some(child) => match child.try_wait() {
+                            Ok(None) => {} // still running
+                            _ => {
+                                // Exited (or we can't tell): clear it and respawn.
+                                *guard = None;
+                                break;
+                            }
+                        },
+                        None => return, // taken by the Exit handler
+                    }
+                    drop(guard);
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+            Err(e) => eprintln!("[core] failed to start: {e}"),
+        }
+
+        // Back off before the next attempt so a core that dies immediately
+        // (e.g. no usable interface) doesn't spin.
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -187,8 +315,13 @@ pub fn run() {
         .expect("error while building SelfishNetwork")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(mut child) = app.state::<CoreProcess>().0.lock().unwrap().take() {
-                    let _ = child.kill();
+                let state = app.state::<CoreProcess>();
+                // Stop the supervisor before taking the child, so it doesn't
+                // spawn a replacement as we shut down.
+                state.shutting_down.store(true, Ordering::SeqCst);
+                let child = state.child.lock().unwrap().take();
+                if let Some(mut child) = child {
+                    stop_core(&mut child);
                 }
             }
         });

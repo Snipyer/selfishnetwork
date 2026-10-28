@@ -62,14 +62,19 @@ jobs:
         working-directory: ui
         run: npm run dist:linux
 
-      - name: Upload Linux artifacts
+      - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: selfishnet-linux
+          name: selfishnet-linux-appimage
           if-no-files-found: error
-          path: |
-            ui/src-tauri/target/release/bundle/appimage/*.AppImage
-            ui/src-tauri/target/release/bundle/deb/*.deb
+          path: ui/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfishnet-linux-deb
+          if-no-files-found: error
+          path: ui/src-tauri/target/release/bundle/deb/*.deb
 
   windows:
     name: Windows (NSIS, cross-compiled)
