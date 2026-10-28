@@ -1,0 +1,15 @@
+# Rust
+/core/target
+
+# Node / Electron
+node_modules/
+/ui/dist
+/ui/dist-electron
+/ui/out
+*.log
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
