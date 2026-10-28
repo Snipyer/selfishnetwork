@@ -40,9 +40,6 @@
     "category": "Utility",
     "shortDescription": "Manage your own local network",
     "longDescription": "Discover devices on your local network via ARP interception, and cut or throttle their bandwidth.",
-    "resources": {
-      "../../core/target/release/selfishnet-core": "bin/selfishnet-core"
-    },
     "linux": {
       "deb": {
         "postInstallScript": "../build/deb-after-install.sh",

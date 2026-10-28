@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../core/target/release/selfishnet-core": "bin/selfishnet-core"
+    }
+  }
+}

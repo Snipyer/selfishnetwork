@@ -15,7 +15,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "dist:linux": "tauri build --bundles appimage deb"
+    "dist:linux": "tauri build --bundles appimage deb --config src-tauri/resources.linux.json",
+    "dist:windows": "tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/resources.windows.json"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

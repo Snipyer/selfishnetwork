@@ -18,6 +18,12 @@ use tauri::{Manager, RunEvent};
 //                    send_redirects) that userspace forwarding needs.
 const CORE_CAPS: &str = "cap_net_raw,cap_net_admin,cap_dac_override+ep";
 
+// The core daemon's file name differs by platform (Windows keeps the `.exe`).
+#[cfg(windows)]
+const CORE_BIN: &str = "selfishnet-core.exe";
+#[cfg(not(windows))]
+const CORE_BIN: &str = "selfishnet-core";
+
 /// Holds the auto-started core daemon so it can be killed when the app exits.
 #[derive(Default)]
 struct CoreProcess(Mutex<Option<Child>>);
@@ -30,12 +36,16 @@ struct CoreProcess(Mutex<Option<Child>>);
 /// stages next to the dev binary when it mirrors bundle resources.
 fn core_binary_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     // CARGO_MANIFEST_DIR is ui/src-tauri at compile time.
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../core/target/release/selfishnet-core");
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../core/target/release/{CORE_BIN}"));
     if cfg!(debug_assertions) && dev.exists() {
         return Some(dev);
     }
 
-    if let Ok(bundled) = app.path().resolve("bin/selfishnet-core", BaseDirectory::Resource) {
+    if let Ok(bundled) = app
+        .path()
+        .resolve(format!("bin/{CORE_BIN}"), BaseDirectory::Resource)
+    {
         if bundled.exists() {
             return Some(bundled);
         }
@@ -105,11 +115,61 @@ fn start_core(app: &tauri::AppHandle) {
         return;
     };
 
-    match Command::new(&bin).stdout(Stdio::inherit()).stderr(Stdio::inherit()).spawn() {
+    let mut cmd = Command::new(&bin);
+    cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    // The core is a console binary; without this it pops a visible console
+    // window when launched from the (windowed) shell on Windows.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    match cmd.spawn() {
         Ok(child) => {
             *app.state::<CoreProcess>().0.lock().unwrap() = Some(child);
         }
         Err(e) => eprintln!("[core] failed to start: {e}"),
+    }
+}
+
+/// Remove the Windows 11 non-client border. On an undecorated (`decorations:
+/// false`) window Windows still paints a 1px DWM frame in a light system color,
+/// which shows as a thin white hairline on the sides/bottom of our dark window.
+/// `DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE` drops it. No-op on Windows 10 (the
+/// attribute is unsupported there and the call just returns an error we ignore).
+#[cfg(windows)]
+fn strip_window_border(app: &tauri::AppHandle) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    };
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    let hwnd = hwnd.0 as *mut core::ffi::c_void;
+    unsafe {
+        // Paint the frame border our background colour (BGR 0x00RRGGBB → 0x161110
+        // for #0e1116) instead of the light default, so no light hairline shows.
+        let color: u32 = 0x0016_110e;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as u32,
+            &color as *const u32 as *const core::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+        );
+        // Square the corners: Win11's rounded corners leave an anti-aliased light
+        // edge against our dark window.
+        let corner: i32 = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            &corner as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
     }
 }
 
@@ -118,6 +178,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(CoreProcess::default())
         .setup(|app| {
+            #[cfg(windows)]
+            strip_window_border(app.handle());
             start_core(app.handle());
             Ok(())
         })

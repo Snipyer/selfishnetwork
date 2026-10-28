@@ -5,6 +5,9 @@
 # Tauri (generated schemas/capabilities)
 /ui/src-tauri/gen
 
+# Cross-build dependencies fetched locally (e.g. Npcap SDK for Windows)
+/.build-deps
+
 # Node / frontend
 node_modules/
 /ui/dist

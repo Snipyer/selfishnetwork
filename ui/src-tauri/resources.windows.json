@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../../core/target/x86_64-pc-windows-msvc/release/selfishnet-core.exe": "bin/selfishnet-core.exe"
+    }
+  }
+}
