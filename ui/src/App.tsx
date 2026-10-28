@@ -19,7 +19,7 @@ export default function App() {
 			<div className="flex h-screen flex-col bg-background text-foreground">
 				<header className="border-b border-border">
 					<div className="flex h-9 items-center px-2" data-tauri-drag-region>
-						<div className="flex flex-1 items-center justify-center gap-2">
+						<div className="flex flex-1 items-center justify-center gap-2" data-tauri-drag-region>
 							<img src={appIcon} alt="SelfishNetwork" className="size-4" />
 							<span className="text-xs font-medium tracking-tight">SelfishNetwork</span>
 						</div>
