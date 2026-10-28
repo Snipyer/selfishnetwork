@@ -142,3 +142,42 @@ jobs:
           name: selfishnet-windows
           if-no-files-found: error
           path: ui/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+
+  # Collect the per-OS bundles and publish them to a GitHub Release, renamed to
+  # SelfishNetwork-<version>.<ext> using the version from tauri.conf.json.
+  release:
+    name: Release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from tauri.conf.json
+        id: version
+        run: |
+          version="$(jq -r .version ui/src-tauri/tauri.conf.json)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # download-artifact@v4 drops each artifact into artifacts/<artifact-name>/.
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Rename bundles with the version
+        run: |
+          v='${{ steps.version.outputs.version }}'
+          mkdir -p release
+          cp artifacts/selfishnet-linux-deb/*.deb           "release/SelfishNetwork-$v.deb"
+          cp artifacts/selfishnet-linux-appimage/*.AppImage "release/SelfishNetwork-$v.AppImage"
+          cp artifacts/selfishnet-windows/*-setup.exe       "release/SelfishNetwork-$v-setup.exe"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: SelfishNetwork ${{ steps.version.outputs.version }}
+          files: release/*
+          fail_on_unmatched_files: true
