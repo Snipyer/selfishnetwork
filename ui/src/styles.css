@@ -129,8 +129,11 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Paint html too (not just body): WebView2's default surface is white, and at
+     fractional Windows DPI (125%/150%) a sub-pixel edge gap otherwise shows a
+     thin white hairline on the window's sides/bottom in dark mode. */
   html {
-    @apply font-sans;
+    @apply bg-background font-sans;
   }
 }
 

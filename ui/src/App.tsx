@@ -90,11 +90,17 @@ export default function App() {
 								<code className="mono rounded-none bg-muted px-1 py-0.5">
 									{CORE_URL}
 								</code>
-								. Start it with{' '}
-								<code className="mono rounded-none bg-muted px-1 py-0.5">
-									./scripts/setcap-core.sh &amp;&amp; selfishnet-core
-								</code>
-								. Retrying…
+								.{' '}
+								{import.meta.env.DEV && (
+									<>
+										Start it with{' '}
+										<code className="mono rounded-none bg-muted px-1 py-0.5">
+											./scripts/setcap-core.sh &amp;&amp; selfishnet-core
+										</code>
+										.{' '}
+									</>
+								)}
+								Retrying…
 							</AlertDescription>
 						</Alert>
 					)}
