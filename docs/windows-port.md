@@ -1,7 +1,7 @@
 # Windows port
 
-SelfishNetwork is Linux-only at runtime. This doc tracks what a Windows port
-needs.
+SelfishNetwork runs on Windows. This doc tracks how the port is built and its
+one notable runtime limitation.
 
 **Build pipeline: done.** Every OS-coupled piece of the core lives behind one
 module (`core/src/platform/`), the core cross-compiles and links to a real
@@ -9,11 +9,23 @@ module (`core/src/platform/`), the core cross-compiles and links to a real
 installer from Linux (see the README "Build (Windows)" section). The installer
 bundles the core daemon and installs cleanly.
 
-**What's left is runtime.** The Windows backend
-(`core/src/platform/windows.rs`) is still a stub, so the installed app launches
-but device control errors out. Implementing and *validating* the three
-functions below requires actual Windows hardware — none of it can be verified
-from the Linux build host.
+**Runtime: working on wired Ethernet.** The Windows backend
+(`core/src/platform/windows.rs`) is implemented — discovery, cut, throttle and
+restore work on wired adapters. The one caveat is Wi-Fi (see below).
+
+## Known limitation: Wi-Fi adapters
+
+Device control only works reliably over a **wired Ethernet** connection on
+Windows. Most Wi-Fi adapters, when associated to an access point in managed
+(infrastructure) mode, will not transmit layer-2 frames whose source MAC isn't
+the adapter's own — the 802.11 stack and driver silently rewrite or drop them.
+ARP-spoof MITM depends on sending frames with a spoofed source MAC, so on those
+adapters the spoof never reaches the targets and cut/throttle has no effect.
+
+This is a platform/driver constraint (Npcap exposes the same limits as the
+underlying 802.11 stack), not something the app can work around in software.
+Linux is largely unaffected because its drivers permit raw layer-2 injection on
+Wi-Fi. Run SelfishNetwork on a wired connection on Windows for now.
 
 ## What's already portable
 
@@ -22,9 +34,8 @@ from the Linux build host.
 - The data plane (`engine.rs`), discovery sweeps (`net/scan.rs`), subnet math,
   the WebSocket protocol and the Tauri UI are all OS-agnostic.
 - The three non-portable surfaces are isolated in `core/src/platform/`:
-  - `linux.rs` — the working Linux backend.
-  - `windows.rs` — a stub that compiles and errors at runtime, with a TODO per
-    item naming the API to use.
+  - `linux.rs` — the Linux backend.
+  - `windows.rs` — the Windows backend (IP Helper API + registry/`netsh`).
   - `mod.rs` — the contract both backends satisfy.
 
 ## What the Windows backend must implement

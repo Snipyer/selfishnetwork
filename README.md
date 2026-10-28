@@ -2,7 +2,8 @@
 
 See every device on your local network and take control of it — **cut** a
 device off the internet entirely, or **throttle** it to a bandwidth limit you
-choose. All from a simple desktop app, no command line required.
+choose. All from a simple desktop app, no command line required. Runs on
+**Linux** and **Windows**.
 
 ![SelfishNetwork device table](docs/screenshot.png)
 
@@ -26,10 +27,12 @@ so you don't need to log into your router or change any router settings.
 
 ## Install
 
-> **Linux only for now.** A Windows version is in progress but not yet usable —
-> see [For developers](#for-developers).
+> **Windows note:** device control works over a **wired Ethernet** connection.
+> On most Wi-Fi adapters the interception can't take effect — a driver/802.11
+> limitation. See [`docs/windows-port.md`](docs/windows-port.md) for why. To
+> build the Windows app, see [For developers](#for-developers).
 
-Grab the latest build from the
+Grab the latest Linux build from the
 [**Releases**](https://github.com/Snipyer/selfishnetwork/releases) page. Two
 formats are available:
 
@@ -72,8 +75,9 @@ Fully working on Linux: device discovery, cut, throttle, and live bandwidth
 stats all work, and your network is cleanly restored when you release a device
 or exit.
 
-Windows is not usable yet — the app builds and installs, but the networking
-backend that actually controls devices is still being written.
+Working on Windows too, with one caveat: device control only takes effect over
+a **wired Ethernet** connection — most Wi-Fi adapters block the interception at
+the driver level. Details in [`docs/windows-port.md`](docs/windows-port.md).
 
 ---
 
@@ -146,9 +150,9 @@ Output lands in `ui/src-tauri/target/release/bundle/`:
 ### Build (Windows)
 
 A Windows `.exe` installer cross-compiles from Linux. The networking backend is
-not implemented yet (it builds and errors at runtime — see
-[`docs/windows-port.md`](docs/windows-port.md)), but the installer and app shell
-build end to end. Prerequisites on the build host:
+implemented and works on wired Ethernet (Wi-Fi is limited — see
+[`docs/windows-port.md`](docs/windows-port.md)). Prerequisites on the build
+host:
 
 - [`cargo-xwin`](https://github.com/rust-cross/cargo-xwin) (`cargo install cargo-xwin`)
   and the MSVC Rust target (`rustup target add x86_64-pc-windows-msvc`),
@@ -193,7 +197,9 @@ prerequisite.
 
 ### Windows port status
 
-Windows builds and installs, but the platform backend
-([`core/src/platform/windows.rs`](core/src/platform/windows.rs)) is still a stub
-— device control won't work until it's implemented and validated on Windows
-hardware. [`docs/windows-port.md`](docs/windows-port.md) tracks what remains.
+Windows builds, installs, and runs: the platform backend
+([`core/src/platform/windows.rs`](core/src/platform/windows.rs)) is implemented
+and device control works over wired Ethernet. The known limitation is Wi-Fi —
+most adapters won't transmit the spoofed layer-2 frames the MITM relies on.
+[`docs/windows-port.md`](docs/windows-port.md) has the details and remaining
+packaging polish.
