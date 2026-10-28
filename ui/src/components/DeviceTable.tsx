@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Command, Device } from '../lib/protocol'
 import type { Stats } from '../lib/useCore'
-import { fmtBps } from '../lib/format'
+import { fmtByteRate } from '../lib/format'
 
 interface Props {
   devices: Device[]
@@ -76,8 +76,8 @@ function DeviceRow({
         <div className="sub">{d.hostname ?? d.vendor ?? ''}</div>
       </td>
       <td className="mono">{d.mac}</td>
-      <td className="num mono">{stats ? fmtBps(stats.down_bps) : '—'}</td>
-      <td className="num mono">{stats ? fmtBps(stats.up_bps) : '—'}</td>
+      <td className="num mono">{stats ? fmtByteRate(stats.down_bps) : '—'}</td>
+      <td className="num mono">{stats ? fmtByteRate(stats.up_bps) : '—'}</td>
       <td>
         {role === 'self' && <span className="badge self">this machine</span>}
         {role === 'gateway' && <span className="badge gateway">gateway</span>}

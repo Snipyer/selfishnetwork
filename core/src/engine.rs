@@ -33,7 +33,7 @@ use tokio::sync::broadcast;
 use tokio::time::interval;
 use tracing::{info, warn};
 
-const POISON_INTERVAL: Duration = Duration::from_millis(1500);
+const POISON_INTERVAL: Duration = Duration::from_millis(500);
 const STATS_INTERVAL: Duration = Duration::from_millis(1000);
 const CAPTURE_READ_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_FRAME: usize = 1600;
@@ -131,16 +131,28 @@ impl Engine {
 
     /// Begin intercepting `ip`. Applies the sysctl guard on the first target.
     pub fn intercept(&self, ip: Ipv4Addr, mac: MacAddr) -> Result<()> {
-        let mut targets = self.inner.targets.lock().unwrap();
-        if targets.is_empty() && self.inner.sysctl.lock().unwrap().is_none() {
-            let guard = SysctlGuard::apply(&self.inner.ctx.iface.name)?;
-            *self.inner.sysctl.lock().unwrap() = Some(guard);
-            info!("userspace forwarding engaged (ip_forward/send_redirects off)");
+        {
+            let mut targets = self.inner.targets.lock().unwrap();
+            if targets.is_empty() && self.inner.sysctl.lock().unwrap().is_none() {
+                let guard = SysctlGuard::apply(&self.inner.ctx.iface.name)?;
+                *self.inner.sysctl.lock().unwrap() = Some(guard);
+                info!("userspace forwarding engaged (ip_forward/send_redirects off)");
+            }
+            targets
+                .entry(ip)
+                .and_modify(|t| t.mac = mac)
+                .or_insert_with(|| Target::new(mac));
         }
-        targets
-            .entry(ip)
-            .and_modify(|t| t.mac = mac)
-            .or_insert_with(|| Target::new(mac));
+        // Establish the MITM right away with a short burst, so traffic starts
+        // flowing through us immediately instead of bypassing us (reading 0)
+        // until the poison loop's next tick.
+        let peer = Peer { ip, mac };
+        for _ in 0..3 {
+            if let Err(e) = arp::poison_once(&self.inner.ctx, peer, self.inner.gateway) {
+                warn!("initial poison {ip} failed: {e}");
+                break;
+            }
+        }
         info!("intercepting {ip} ({mac})");
         Ok(())
     }

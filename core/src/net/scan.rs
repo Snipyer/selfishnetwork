@@ -4,10 +4,14 @@
 //! power-save mode routinely ignore a single broadcast ARP request:
 //!   1. seed from the kernel neighbor table (`/proc/net/arp`) — instant for
 //!      anything the host already knows;
-//!   2. send several *paced* rounds of ARP requests over the whole subnet, so a
-//!      dozing phone gets another chance to answer (and we don't drop packets by
-//!      bursting 254 at once);
-//!   3. harvest the neighbor table again at the end, since the kernel also sees
+//!   2. nudge the kernel to resolve every host over its *own* retrying ARP (a
+//!      throwaway UDP probe per host): a dozing device that ignores our one-shot
+//!      broadcast still answers the kernel's persistent requests, so it lands in
+//!      the neighbor table for the final harvest;
+//!   3. send several *paced* rounds of broadcast ARP ourselves, so a dozing
+//!      phone gets more chances to answer (and we don't drop packets by bursting
+//!      254 at once);
+//!   4. harvest the neighbor table again at the end, since the kernel also sees
 //!      the replies and may have learned hosts we missed.
 
 use super::NetCtx;
@@ -20,7 +24,7 @@ use pnet::util::MacAddr;
 use std::collections::HashSet;
 use std::fs;
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -77,6 +81,23 @@ fn is_timeout(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock)
 }
 
+/// Force the kernel to ARP-resolve each host by sending it a throwaway, empty
+/// UDP datagram: the kernel must resolve the destination's MAC before it can
+/// send, and its resolver retries persistently — so dozing / power-save devices
+/// that ignore our single broadcast still get learned and show up in the
+/// neighbor-table harvest. Nothing needs to be listening on the far side; send
+/// errors (no route, unreachable) are expected and ignored.
+fn prod_kernel_arp(hosts: &[Ipv4Addr]) {
+    let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
+        return;
+    };
+    for host in hosts {
+        // Port 9 (discard); the payload is irrelevant, the ARP side effect is
+        // the whole point.
+        let _ = sock.send_to(&[], SocketAddrV4::new(*host, 9));
+    }
+}
+
 /// Sweep the whole subnet. Calls `on_found` once per discovered host.
 ///
 /// `window` is the total listening budget, split across [`SWEEP_ROUNDS`].
@@ -95,8 +116,13 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
         }
     }
 
-    // 2. Several paced rounds, listening between each.
+    // 2. Nudge the kernel to ARP every host (its retrying resolver catches
+    //    power-save devices our one-shot broadcast misses). This runs in the
+    //    background while our own rounds below play out, settling by the harvest.
     let hosts = ctx.subnet_hosts();
+    prod_kernel_arp(&hosts);
+
+    // 3. Several paced rounds, listening between each.
     let per_round = window / SWEEP_ROUNDS.max(1);
     for _ in 0..SWEEP_ROUNDS {
         for (i, host) in hosts.iter().enumerate() {
@@ -132,7 +158,8 @@ pub fn arp_sweep<F: FnMut(Ipv4Addr, MacAddr)>(
         }
     }
 
-    // 3. Final harvest: the kernel may have learned hosts from the replies above.
+    // 4. Final harvest: the kernel may have learned hosts from the replies above
+    //    and from the UDP-prodded resolutions.
     for (ip, mac) in neighbor_table(&ctx.iface.name) {
         if ip != ctx.our_ip && seen.insert(ip) {
             on_found(ip, mac);
