@@ -3,6 +3,7 @@
 pub mod arp;
 pub mod forward;
 pub mod scan;
+pub mod sysctl;
 
 use anyhow::{anyhow, Context, Result};
 use pnet::datalink::{self, NetworkInterface};
@@ -75,11 +76,6 @@ impl NetCtx {
         }
         hosts
     }
-}
-
-/// Format a MAC the way the UI expects (lowercase, colon-separated).
-pub fn mac_string(mac: MacAddr) -> String {
-    mac.to_string()
 }
 
 /// Parse `/proc/net/route` for the default gateway and its interface.

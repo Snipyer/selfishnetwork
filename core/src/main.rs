@@ -1,5 +1,6 @@
 //! SelfishNet core daemon entrypoint.
 
+mod engine;
 mod net;
 mod protocol;
 mod state;
@@ -8,9 +9,9 @@ mod ws;
 use anyhow::Result;
 use clap::Parser;
 use net::NetCtx;
-use state::AppState;
+use state::App;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -48,15 +49,14 @@ async fn main() -> Result<()> {
         ctx.iface.name, ctx.our_ip, ctx.our_mac, ctx.gateway_ip
     );
 
-    // Resolve the gateway's MAC once so the UI can show it; non-fatal if it
-    // times out (the device may just be slow to answer).
+    // Resolve the gateway's MAC once; non-fatal if it times out.
     let gateway_mac = match net::scan::resolve_mac(&ctx, ctx.gateway_ip, Duration::from_secs(2)) {
         Ok(Some(mac)) => {
             info!("gateway MAC {mac}");
             Some(mac)
         }
         Ok(None) => {
-            warn!("gateway MAC not resolved (ARP timeout)");
+            warn!("gateway MAC not resolved (ARP timeout) — scan to learn it");
             None
         }
         Err(e) => {
@@ -65,7 +65,23 @@ async fn main() -> Result<()> {
         }
     };
 
-    let state = Arc::new(Mutex::new(AppState::new(ctx, gateway_mac)));
+    let app = Arc::new(App::new(ctx, gateway_mac));
+    app.engine.start();
+
+    // Restore ARP caches + sysctls on Ctrl-C before exiting.
+    let shutdown = app.engine.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            info!("shutting down…");
+            shutdown.shutdown();
+            std::process::exit(0);
+        }
+    });
+
     let bind = SocketAddr::new(args.bind, args.port);
-    ws::serve(state, bind).await
+    let serve = ws::serve(app.clone(), bind).await;
+
+    // If the server loop ever returns, still clean up.
+    app.engine.shutdown();
+    serve
 }

@@ -1,158 +1,157 @@
 //! WebSocket server: the control plane the UI talks to.
 //!
-//! Commands come in as JSON ([`Command`]); the core streams back [`Event`]s.
-//! Device discovery is live; interception/cut/throttle currently update the
-//! shared state and acknowledge (the data plane in `net::arp` / `net::forward`
-//! is wired next), so the UI is fully exercisable end-to-end.
+//! Each connection subscribes to the app-wide event broadcast, so engine
+//! `stats` and any client's `device_update` reach every client. Commands mutate
+//! the device table + drive the [`Engine`](crate::engine::Engine) and publish
+//! their results back through the broadcast.
 
 use crate::net::scan;
 use crate::protocol::{Command, Event, Throttle};
-use crate::state::AppState;
+use crate::state::App;
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
-type Shared = Arc<Mutex<AppState>>;
-
 /// Listen for UI connections forever.
-pub async fn serve(state: Shared, bind: SocketAddr) -> Result<()> {
+pub async fn serve(app: Arc<App>, bind: SocketAddr) -> Result<()> {
     let listener = TcpListener::bind(bind).await?;
     info!("listening on ws://{bind}");
     loop {
         let (stream, peer) = listener.accept().await?;
-        let state = state.clone();
+        let app = app.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(stream, state).await {
+            if let Err(e) = handle(stream, app).await {
                 warn!("connection {peer} ended: {e}");
             }
         });
     }
 }
 
-async fn handle(stream: TcpStream, state: Shared) -> Result<()> {
+async fn handle(stream: TcpStream, app: Arc<App>) -> Result<()> {
     let ws = tokio_tungstenite::accept_async(stream).await?;
     let (mut write, mut read) = ws.split();
+    let mut events = app.events.subscribe();
 
-    // Greet: who we are, plus whatever we already know.
-    let (hello, snapshot) = {
-        let s = state.lock().unwrap();
-        (
-            Event::Hello {
-                iface: s.ctx.iface.name.clone(),
-                gateway: s.gateway.clone(),
-                own: s.own.clone(),
-            },
-            s.snapshot(),
-        )
-    };
-    send(&mut write, &hello).await?;
-    for device in snapshot {
+    // Greet with our identity and whatever we already know.
+    send(
+        &mut write,
+        &Event::Hello {
+            iface: app.ctx.iface.name.clone(),
+            gateway: app.gateway.clone(),
+            own: app.own.clone(),
+        },
+    )
+    .await?;
+    for device in app.snapshot() {
         send(&mut write, &Event::Device { device }).await?;
     }
 
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
-        let text = match msg {
-            Message::Text(t) => t,
-            Message::Close(_) => break,
-            Message::Ping(_) | Message::Pong(_) | Message::Binary(_) | Message::Frame(_) => continue,
-        };
-        let cmd: Command = match serde_json::from_str(&text) {
-            Ok(c) => c,
-            Err(e) => {
-                send(&mut write, &Event::Error { message: format!("bad command: {e}") }).await?;
-                continue;
-            }
-        };
-        if let Err(e) = dispatch(cmd, &state, &mut write).await {
-            send(&mut write, &Event::Error { message: e.to_string() }).await?;
+    loop {
+        tokio::select! {
+            biased;
+            incoming = read.next() => match incoming {
+                Some(Ok(Message::Text(txt))) => {
+                    match serde_json::from_str::<Command>(&txt) {
+                        Ok(cmd) => {
+                            if let Err(e) = dispatch(&app, cmd, &mut write).await {
+                                send(&mut write, &Event::Error { message: e.to_string() }).await?;
+                            }
+                        }
+                        Err(e) => {
+                            send(&mut write, &Event::Error { message: format!("bad command: {e}") }).await?;
+                        }
+                    }
+                }
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Ok(_)) => {}
+                Some(Err(e)) => { warn!("read error: {e}"); break; }
+            },
+            ev = events.recv() => match ev {
+                Ok(ev) => send(&mut write, &ev).await?,
+                Err(RecvError::Lagged(n)) => warn!("client lagged, dropped {n} events"),
+                Err(RecvError::Closed) => break,
+            },
         }
     }
     Ok(())
 }
 
-async fn dispatch<W>(cmd: Command, state: &Shared, write: &mut W) -> Result<()>
+async fn dispatch<W>(app: &Arc<App>, cmd: Command, write: &mut W) -> Result<()>
 where
     W: SinkExt<Message> + Unpin,
     W::Error: std::error::Error + Send + Sync + 'static,
 {
     match cmd {
-        Command::Scan => run_scan(state, write).await?,
+        Command::Scan => run_scan(app),
         Command::Status => {
-            let snap = state.lock().unwrap().snapshot();
-            for device in snap {
+            for device in app.snapshot() {
                 send(write, &Event::Device { device }).await?;
             }
         }
         Command::Intercept { ip } => {
-            emit_update(state, write, ip, |d| d.intercepted = true).await?;
-            warn!("intercept {ip}: data plane not yet wired (scaffold)");
+            let mac = app
+                .device_mac(&ip)
+                .ok_or_else(|| anyhow::anyhow!("unknown device {ip} — scan first"))?;
+            app.engine.intercept(ip, mac)?;
+            publish_update(app, ip, |d| d.intercepted = true);
         }
         Command::Release { ip } => {
-            emit_update(state, write, ip, |d| {
+            app.engine.release(ip);
+            publish_update(app, ip, |d| {
                 d.intercepted = false;
                 d.cut = false;
                 d.throttle = Throttle::default();
-            })
-            .await?;
+            });
         }
         Command::Cut { ip, enabled } => {
-            emit_update(state, write, ip, |d| d.cut = enabled).await?;
+            app.engine.set_cut(ip, enabled);
+            publish_update(app, ip, |d| d.cut = enabled);
         }
         Command::Throttle { ip, down_kbps, up_kbps } => {
-            emit_update(state, write, ip, |d| {
-                d.throttle = Throttle { down_kbps, up_kbps };
-            })
-            .await?;
+            app.engine.set_throttle(ip, down_kbps, up_kbps);
+            publish_update(app, ip, |d| d.throttle = Throttle { down_kbps, up_kbps });
         }
     }
     Ok(())
 }
 
-async fn run_scan<W>(state: &Shared, write: &mut W) -> Result<()>
-where
-    W: SinkExt<Message> + Unpin,
-    W::Error: std::error::Error + Send + Sync + 'static,
-{
-    send(write, &Event::ScanStarted).await?;
-
-    let ctx = state.lock().unwrap().ctx.clone();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let handle = tokio::task::spawn_blocking(move || {
-        scan::arp_sweep(&ctx, Duration::from_secs(3), |ip, mac| {
-            let _ = tx.send((ip, mac));
+/// Kick off an ARP sweep in the background, publishing results to all clients.
+fn run_scan(app: &Arc<App>) {
+    let app = app.clone();
+    app.broadcast(Event::ScanStarted);
+    tokio::spawn(async move {
+        let ctx = app.ctx.clone();
+        let sweep_app = app.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            scan::arp_sweep(&ctx, Duration::from_secs(4), |ip, mac| {
+                sweep_app.engine.note_mac(ip, mac);
+                let device = sweep_app.upsert(ip, mac);
+                sweep_app.broadcast(Event::Device { device });
+            })
         })
-    });
+        .await;
 
-    let mut count = 0;
-    while let Some((ip, mac)) = rx.recv().await {
-        let device = state.lock().unwrap().upsert(ip, mac);
-        send(write, &Event::Device { device }).await?;
-        count += 1;
-    }
-    handle.await??;
-    send(write, &Event::ScanDone { count }).await?;
-    Ok(())
+        let count = app.snapshot().len();
+        match result {
+            Ok(Ok(())) => app.broadcast(Event::ScanDone { count }),
+            Ok(Err(e)) => app.broadcast(Event::Error { message: format!("scan failed: {e}") }),
+            Err(e) => app.broadcast(Event::Error { message: format!("scan task failed: {e}") }),
+        }
+    });
 }
 
-async fn emit_update<W, F>(state: &Shared, write: &mut W, ip: std::net::Ipv4Addr, f: F) -> Result<()>
-where
-    W: SinkExt<Message> + Unpin,
-    W::Error: std::error::Error + Send + Sync + 'static,
-    F: FnOnce(&mut crate::protocol::Device),
-{
-    let updated = state.lock().unwrap().update(&ip, f);
-    match updated {
-        Some(device) => send(write, &Event::DeviceUpdate { device }).await?,
-        None => send(write, &Event::Error { message: format!("unknown device {ip}") }).await?,
+/// Apply a UI-model change and broadcast it (or an error if unknown).
+fn publish_update<F: FnOnce(&mut crate::protocol::Device)>(app: &Arc<App>, ip: std::net::Ipv4Addr, f: F) {
+    match app.update_device(&ip, f) {
+        Some(device) => app.broadcast(Event::DeviceUpdate { device }),
+        None => app.broadcast(Event::Error { message: format!("unknown device {ip}") }),
     }
-    Ok(())
 }
 
 async fn send<W>(write: &mut W, event: &Event) -> Result<()>

@@ -16,7 +16,7 @@ Two processes, split by privilege:
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
 │  Electron UI (unprivileged) │  WS    │  Rust core daemon (root-ish)  │
-│  React + TS + Vite          │◄──────►│  cap_net_raw, cap_net_admin   │
+│  React + TS + Vite          │◄──────►│  net_raw/net_admin/dac_override│
 │  device list, live graphs   │ JSON   │  ARP scan · ARP spoof (MITM)  │
 │  cut / throttle controls    │ :8734  │  userspace fwd · token bucket │
 └─────────────────────────────┘        └──────────────────────────────┘
@@ -46,7 +46,8 @@ The WS message contract shared by both sides lives in
 
 ## Status
 
-Scaffold. Device discovery (ARP scan) and the WS plumbing are wired end-to-end;
-ARP spoofing, userspace forwarding and throttling are stubbed with the real
-interfaces in place (`core/src/net/arp.rs`, `core/src/net/forward.rs`) and are
-the next things to implement.
+Functional on Linux. Device discovery, ARP-spoof MITM, userspace forwarding,
+per-device **cut** and **throttle**, and live bandwidth stats all work; ARP
+caches and kernel sysctls are restored on release/exit. See
+[`core/README.md`](core/README.md#how-forwarding-works) for how the data plane
+works and its v1 limits (IPv4-only forwarding, drop-based throttling).

@@ -67,20 +67,6 @@ impl TokenBucket {
     }
 }
 
-/// Byte/packet counters for one direction of a device's traffic.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct Counters {
-    pub bytes: u64,
-    pub packets: u64,
-}
-
-impl Counters {
-    pub fn record(&mut self, bytes: usize) {
-        self.bytes += bytes as u64;
-        self.packets += 1;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
