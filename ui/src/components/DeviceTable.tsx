@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BanIcon, CheckIcon, EyeIcon, EyeOffIcon, GaugeIcon, PencilIcon, RotateCcwIcon, WifiOffIcon } from 'lucide-react'
+import { BanIcon, CheckIcon, EyeIcon, EyeOffIcon, PencilIcon, RotateCcwIcon, WifiOffIcon } from 'lucide-react'
 import type { Command, Device } from '../lib/protocol'
 import type { Stats } from '../lib/useCore'
 import { fmtByteRate } from '../lib/format'

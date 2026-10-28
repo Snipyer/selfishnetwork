@@ -40,6 +40,26 @@ The WS message contract shared by both sides lives in
 ./scripts/dev.sh
 ```
 
+## Install (Linux)
+
+Build a `.deb` and an `.AppImage` — both bundle the compiled core daemon and
+grant it the required capabilities automatically (the `.deb`'s postinstall
+script runs `setcap`; see `ui/build/deb-after-install.sh`):
+
+```bash
+cd core && cargo build --release && cd ..
+cd ui && npm install && npm run dist:linux
+```
+
+Output lands in `ui/release/`:
+
+- `SelfishNetwork-<version>.AppImage` — portable, no install step. Capabilities
+  aren't set automatically for it (the squashfs is read-only); if ARP
+  spoofing/forwarding doesn't start, extract it once (`./SelfishNetwork-*.AppImage --appimage-extract`)
+  and run `sudo setcap cap_net_raw,cap_net_admin,cap_dac_override+ep squashfs-root/resources/bin/selfishnet-core`.
+- `selfishnet-ui_<version>_amd64.deb` — `sudo dpkg -i ui/release/selfishnet-ui_*.deb`
+  installs to `/opt/SelfishNetwork` and adds a desktop launcher.
+
 ## Status
 
 Functional on Linux. Device discovery, ARP-spoof MITM, userspace forwarding,

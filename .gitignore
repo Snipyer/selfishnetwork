@@ -6,6 +6,7 @@ node_modules/
 /ui/dist
 /ui/dist-electron
 /ui/out
+/ui/release
 *.log
 
 # OS / editor
