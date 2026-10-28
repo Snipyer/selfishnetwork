@@ -1,5 +1,6 @@
-import { ZapIcon, RadarIcon, TriangleAlertIcon, OctagonAlertIcon } from 'lucide-react'
+import { ZapIcon, RadarIcon, TriangleAlertIcon, OctagonAlertIcon, SunIcon, MoonIcon } from 'lucide-react'
 import { useCore } from './lib/useCore'
+import { useTheme } from './lib/useTheme'
 import { DeviceTable } from './components/DeviceTable'
 import { Button } from './components/ui/button'
 import { Badge } from './components/ui/badge'
@@ -8,6 +9,7 @@ import { TooltipProvider } from './components/ui/tooltip'
 
 export default function App() {
   const { state, send } = useCore()
+  const { theme, toggleTheme } = useTheme()
   const hostCount = state.devices.filter((d) => d.ip !== state.self?.ip && d.ip !== state.gateway?.ip).length
 
   return (
@@ -33,6 +35,14 @@ export default function App() {
             <Badge variant={state.connected ? 'default' : 'destructive'}>
               {state.connected ? 'core connected' : 'core offline'}
             </Badge>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              onClick={toggleTheme}
+            >
+              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+            </Button>
             <Button disabled={!state.connected || state.scanning} onClick={() => send({ cmd: 'scan' })}>
               <RadarIcon data-icon="inline-start" />
               {state.scanning ? 'Scanning…' : 'Scan'}

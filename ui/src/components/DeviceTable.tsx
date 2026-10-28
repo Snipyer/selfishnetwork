@@ -37,7 +37,15 @@ export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) 
   }
 
   return (
-    <Table>
+    <Table className="table-fixed">
+      <colgroup>
+        <col className="w-48" />
+        <col className="w-36" />
+        <col className="w-24" />
+        <col className="w-24" />
+        <col className="w-28" />
+        <col />
+      </colgroup>
       <TableHeader>
         <TableRow>
           <TableHead>Device</TableHead>
@@ -97,13 +105,13 @@ function DeviceRow({
             : undefined
       }
     >
-      <TableCell>
-        <div className="font-medium">{d.ip}</div>
-        <div className="text-xs text-muted-foreground">{d.hostname ?? d.vendor ?? ''}</div>
+      <TableCell className="overflow-hidden">
+        <div className="truncate font-medium">{d.ip}</div>
+        <div className="truncate text-xs text-muted-foreground">{d.hostname ?? d.vendor ?? ''}</div>
       </TableCell>
-      <TableCell className="mono text-xs">{d.mac}</TableCell>
-      <TableCell className="mono text-right text-xs">{stats ? fmtByteRate(stats.down_bps) : '—'}</TableCell>
-      <TableCell className="mono text-right text-xs">{stats ? fmtByteRate(stats.up_bps) : '—'}</TableCell>
+      <TableCell className="mono truncate text-xs">{d.mac}</TableCell>
+      <TableCell className="mono text-right text-xs tabular-nums">{stats ? fmtByteRate(stats.down_bps) : '—'}</TableCell>
+      <TableCell className="mono text-right text-xs tabular-nums">{stats ? fmtByteRate(stats.up_bps) : '—'}</TableCell>
       <TableCell>
         {role === 'self' && <Badge variant="secondary">this machine</Badge>}
         {role === 'gateway' && <Badge variant="default">gateway</Badge>}
