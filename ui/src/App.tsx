@@ -1,9 +1,9 @@
 import { ZapIcon, RadarIcon, TriangleAlertIcon, OctagonAlertIcon, SunIcon, MoonIcon } from 'lucide-react'
 import { useCore } from './lib/useCore'
 import { useTheme } from './lib/useTheme'
+import { cn } from './lib/utils'
 import { DeviceTable } from './components/DeviceTable'
 import { Button } from './components/ui/button'
-import { Badge } from './components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from './components/ui/alert'
 import { TooltipProvider } from './components/ui/tooltip'
 
@@ -15,44 +15,45 @@ export default function App() {
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col bg-background text-foreground">
-        <header className="flex items-center gap-6 border-b border-border bg-card px-5 py-3">
-          <div className="flex items-center gap-2 font-heading text-sm font-semibold">
-            <ZapIcon className="size-4 text-primary" />
-            <span>SelfishNet</span>
+        <header className="border-b border-border px-6 py-3.5">
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex items-center gap-2">
+              <ZapIcon className="size-4 text-primary" />
+              <h1 className="text-[15px] font-semibold tracking-tight">SelfishNet</h1>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className={cn('size-1.5 rounded-full', state.connected ? 'bg-primary' : 'bg-destructive')} />
+              <span className="text-xs text-muted-foreground">{state.connected ? 'Core connected' : 'Core offline'}</span>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                onClick={toggleTheme}
+              >
+                {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+              </Button>
+              <Button disabled={!state.connected || state.scanning} onClick={() => send({ cmd: 'scan' })}>
+                <RadarIcon data-icon="inline-start" />
+                {state.scanning ? 'Scanning…' : 'Scan'}
+              </Button>
+            </div>
           </div>
 
-          <div className="flex flex-1 gap-5">
-            {state.iface && (
-              <>
-                <Info label="iface" value={state.iface} />
-                <Info label="self" value={state.self?.ip ?? '—'} />
-                <Info label="gateway" value={state.gateway?.ip ?? '—'} />
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Badge variant={state.connected ? 'default' : 'destructive'}>
-              {state.connected ? 'core connected' : 'core offline'}
-            </Badge>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              onClick={toggleTheme}
-            >
-              {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-            </Button>
-            <Button disabled={!state.connected || state.scanning} onClick={() => send({ cmd: 'scan' })}>
-              <RadarIcon data-icon="inline-start" />
-              {state.scanning ? 'Scanning…' : 'Scan'}
-            </Button>
-          </div>
+          {state.iface && (
+            <div className="mono mt-1.5 text-xs text-muted-foreground">
+              {state.iface} · self {state.self?.ip ?? '—'} · gateway {state.gateway?.ip ?? '—'} ·{' '}
+              <span className="text-foreground">
+                {hostCount} host{hostCount === 1 ? '' : 's'}
+              </span>{' '}
+              discovered
+            </div>
+          )}
         </header>
 
-        <main className="flex-1 overflow-auto p-5">
+        <main className="flex-1 overflow-auto p-6">
           {!state.connected && (
-            <Alert className="mb-3.5">
+            <Alert className="mb-4">
               <TriangleAlertIcon className="text-chart-4" />
               <AlertTitle>Core daemon unreachable</AlertTitle>
               <AlertDescription>
@@ -69,15 +70,11 @@ export default function App() {
             </Alert>
           )}
           {state.lastError && (
-            <Alert variant="destructive" className="mb-3.5">
+            <Alert variant="destructive" className="mb-4">
               <OctagonAlertIcon />
               <AlertDescription>{state.lastError}</AlertDescription>
             </Alert>
           )}
-
-          <div className="mb-2.5 text-xs text-muted-foreground">
-            {hostCount} host{hostCount === 1 ? '' : 's'} discovered
-          </div>
 
           <DeviceTable
             devices={state.devices}
@@ -88,19 +85,10 @@ export default function App() {
           />
         </main>
 
-        <footer className="border-t border-border bg-card px-5 py-2 text-xs text-muted-foreground">
+        <footer className="border-t border-border px-6 py-2 text-xs text-muted-foreground">
           Authorized use only — manage networks you own or administer.
         </footer>
       </div>
     </TooltipProvider>
-  )
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col leading-tight">
-      <span className="text-[11px] tracking-wide text-muted-foreground uppercase">{label}</span>
-      <span className="mono text-xs">{value}</span>
-    </div>
   )
 }

@@ -105,8 +105,8 @@ function DeviceRow({
             : undefined
       }
     >
-      <TableCell className="overflow-hidden">
-        <div className="truncate font-medium">{d.ip}</div>
+      <TableCell className="overflow-hidden py-3">
+        <div className="mono truncate font-medium">{d.ip}</div>
         <div className="truncate text-xs text-muted-foreground">{d.hostname ?? d.vendor ?? ''}</div>
       </TableCell>
       <TableCell className="mono truncate text-xs">{d.mac}</TableCell>
@@ -117,7 +117,7 @@ function DeviceRow({
         {role === 'gateway' && <Badge variant="default">gateway</Badge>}
         {role === 'host' && d.cut && <Badge variant="destructive">cut</Badge>}
         {role === 'host' && !d.cut && d.intercepted && <Badge variant="outline">intercepted</Badge>}
-        {role === 'host' && !d.intercepted && <Badge variant="ghost">idle</Badge>}
+        {role === 'host' && !d.intercepted && <span className="text-xs text-muted-foreground">idle</span>}
       </TableCell>
       <TableCell>
         {controllable ? (
