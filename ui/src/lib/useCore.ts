@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import type { Command, Device, Endpoint, Event } from './protocol'
 import { CORE_URL } from './shell'
 
 const RECONNECT_MS = 1500
+/** Samples kept per device for the bandwidth sparkline (~60s at 1 sample/s). */
+const HISTORY_LEN = 60
 
 export interface Stats {
   down_bps: number
@@ -19,6 +22,8 @@ export interface CoreState {
   self?: Endpoint
   devices: Device[]
   stats: Record<string, Stats>
+  /** Rolling total-throughput (down+up bps) ring buffer per device IP. */
+  history: Record<string, number[]>
   lastError?: string
 }
 
@@ -32,9 +37,14 @@ export function useCore() {
     scanning: false,
     devices: [],
     stats: {},
+    history: {},
   })
   const wsRef = useRef<WebSocket | null>(null)
   const devicesRef = useRef<Map<string, Device>>(new Map())
+  // New-device alerts: MACs seen so far, and whether the initial scan has
+  // settled so we don't toast for the baseline that streams in on connect.
+  const seenMacs = useRef<Set<string>>(new Set())
+  const baselineReady = useRef(false)
 
   const syncDevices = useCallback(() => {
     setState((s) => ({ ...s, devices: [...devicesRef.current.values()] }))
@@ -50,26 +60,43 @@ export function useCore() {
           setState((s) => ({ ...s, scanning: true }))
           break
         case 'scan_done':
+          // The first completed scan establishes the baseline; after this,
+          // any unseen MAC is a device that joined mid-session.
+          baselineReady.current = true
           setState((s) => ({ ...s, scanning: false }))
           break
         case 'device':
         case 'device_update':
+          if (ev.device.mac && !seenMacs.current.has(ev.device.mac)) {
+            seenMacs.current.add(ev.device.mac)
+            if (baselineReady.current) {
+              const name = ev.device.nickname || ev.device.hostname || ev.device.vendor
+              toast('New device joined', {
+                description: `${name ? `${name} · ` : ''}${ev.device.ip} · ${ev.device.mac}`,
+              })
+            }
+          }
           devicesRef.current.set(ev.device.ip, ev.device)
           syncDevices()
           break
         case 'stats':
-          setState((s) => ({
-            ...s,
-            stats: {
-              ...s.stats,
-              [ev.ip]: {
-                down_bps: ev.down_bps,
-                up_bps: ev.up_bps,
-                down_total: ev.down_total,
-                up_total: ev.up_total,
+          setState((s) => {
+            const prev = s.history[ev.ip] ?? []
+            const next = [...prev, ev.down_bps + ev.up_bps].slice(-HISTORY_LEN)
+            return {
+              ...s,
+              stats: {
+                ...s.stats,
+                [ev.ip]: {
+                  down_bps: ev.down_bps,
+                  up_bps: ev.up_bps,
+                  down_total: ev.down_total,
+                  up_total: ev.up_total,
+                },
               },
-            },
-          }))
+              history: { ...s.history, [ev.ip]: next },
+            }
+          })
           break
         case 'error':
           setState((s) => ({ ...s, lastError: ev.message }))

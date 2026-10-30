@@ -1,25 +1,87 @@
 import { useEffect, useState } from 'react'
-import { BanIcon, CheckIcon, EyeIcon, EyeOffIcon, PencilIcon, RotateCcwIcon, WifiOffIcon } from 'lucide-react'
+import {
+	BanIcon,
+	CheckIcon,
+	ChevronDownIcon,
+	ChevronUpIcon,
+	ChevronsUpDownIcon,
+	EyeIcon,
+	EyeOffIcon,
+	PencilIcon,
+	RotateCcwIcon,
+	WifiOffIcon,
+} from 'lucide-react'
 import type { Command, Device } from '../lib/protocol'
 import type { Stats } from '../lib/useCore'
-import { fmtByteRate } from '../lib/format'
+import { fmtByteRate, fmtBytes } from '../lib/format'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './ui/table'
 import { Badge } from './ui/badge'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from './ui/empty'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { Sparkline } from './Sparkline'
+
+type Role = 'self' | 'gateway' | 'host'
+type SortKey = 'ip' | 'name' | 'down' | 'up' | 'traffic' | 'state'
+type SortDir = 'asc' | 'desc'
 
 interface Props {
 	devices: Device[]
 	stats: Record<string, Stats>
+	history: Record<string, number[]>
 	selfIp?: string
 	gatewayIp?: string
 	send: (cmd: Command) => void
 }
 
-export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) {
-	const sorted = [...devices].sort((a, b) => ipNum(a.ip) - ipNum(b.ip))
+function roleOf(d: Device, selfIp?: string, gatewayIp?: string): Role {
+	return d.ip === selfIp ? 'self' : d.ip === gatewayIp ? 'gateway' : 'host'
+}
+
+const STATE_RANK: Record<Role, number> = { self: 0, gateway: 1, host: 2 }
+
+/** Value a device sorts by for the given column; ties fall back to IP. */
+function sortValue(d: Device, key: SortKey, stats?: Stats, role: Role = 'host'): number | string {
+	switch (key) {
+		case 'name':
+			return (d.nickname || d.hostname || d.vendor || '').toLowerCase()
+		case 'down':
+			return stats?.down_bps ?? 0
+		case 'up':
+			return stats?.up_bps ?? 0
+		case 'traffic':
+			// Total bytes moved since intercepted — the figure shown in the tooltip.
+			return (stats?.down_total ?? 0) + (stats?.up_total ?? 0)
+		case 'state':
+			return STATE_RANK[role] * 10 + (d.cut ? 2 : d.intercepted ? 1 : 0)
+		case 'ip':
+		default:
+			return ipNum(d.ip)
+	}
+}
+
+export function DeviceTable({ devices, stats, history, selfIp, gatewayIp, send }: Props) {
+	const [sortKey, setSortKey] = useState<SortKey>('ip')
+	const [sortDir, setSortDir] = useState<SortDir>('asc')
+
+	const toggleSort = (key: SortKey) => {
+		if (key === sortKey) {
+			setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+		} else {
+			setSortKey(key)
+			// Bandwidth columns are most useful busiest-first.
+			setSortDir(key === 'down' || key === 'up' || key === 'traffic' ? 'desc' : 'asc')
+		}
+	}
+
+	const sorted = [...devices].sort((a, b) => {
+		const av = sortValue(a, sortKey, stats[a.ip], roleOf(a, selfIp, gatewayIp))
+		const bv = sortValue(b, sortKey, stats[b.ip], roleOf(b, selfIp, gatewayIp))
+		let cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+		if (cmp === 0) cmp = ipNum(a.ip) - ipNum(b.ip)
+		return sortDir === 'asc' ? cmp : -cmp
+	})
 	const hosts = sorted.filter((d) => d.ip !== selfIp && d.ip !== gatewayIp)
 	const anyIntercepted = hosts.some((d) => d.intercepted)
 
@@ -43,11 +105,12 @@ export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) 
 		<Table className="table-fixed">
 			<colgroup>
 				<col className="w-10" />
-				<col className="w-56" />
+				<col className="w-32" />
 				<col className="w-44" />
 				<col className="w-24" />
 				<col className="w-24" />
-				<col className="w-44" />
+				<col className="w-28" />
+				<col className="w-28" />
 				<col />
 			</colgroup>
 			<TableHeader>
@@ -71,11 +134,12 @@ export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) 
 							</TooltipProvider>
 						)}
 					</TableHead>
-					<TableHead>Device</TableHead>
-					<TableHead>MAC</TableHead>
-					<TableHead className="text-right">Down</TableHead>
-					<TableHead className="text-right">Up</TableHead>
-					<TableHead>State</TableHead>
+					<SortHeader label="Device" sortKey="ip" active={sortKey} dir={sortDir} onSort={toggleSort} />
+					<SortHeader label="MAC" sortKey="name" active={sortKey} dir={sortDir} onSort={toggleSort} />
+					<SortHeader label="Down" sortKey="down" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+					<SortHeader label="Up" sortKey="up" active={sortKey} dir={sortDir} onSort={toggleSort} align="right" />
+					<SortHeader label="Traffic" sortKey="traffic" active={sortKey} dir={sortDir} onSort={toggleSort} />
+					<SortHeader label="State" sortKey="state" active={sortKey} dir={sortDir} onSort={toggleSort} />
 					<TableHead>Controls</TableHead>
 				</TableRow>
 			</TableHeader>
@@ -85,7 +149,8 @@ export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) 
 						key={d.ip}
 						device={d}
 						stats={stats[d.ip]}
-						role={d.ip === selfIp ? 'self' : d.ip === gatewayIp ? 'gateway' : 'host'}
+						history={history[d.ip]}
+						role={roleOf(d, selfIp, gatewayIp)}
 						send={send}
 					/>
 				))}
@@ -94,15 +159,49 @@ export function DeviceTable({ devices, stats, selfIp, gatewayIp, send }: Props) 
 	)
 }
 
+function SortHeader({
+	label,
+	sortKey,
+	active,
+	dir,
+	onSort,
+	align = 'left',
+}: {
+	label: string
+	sortKey: SortKey
+	active: SortKey
+	dir: SortDir
+	onSort: (key: SortKey) => void
+	align?: 'left' | 'right'
+}) {
+	const isActive = active === sortKey
+	const Icon = !isActive ? ChevronsUpDownIcon : dir === 'asc' ? ChevronUpIcon : ChevronDownIcon
+	return (
+		<TableHead className={align === 'right' ? 'text-right' : undefined}>
+			<button
+				type="button"
+				onClick={() => onSort(sortKey)}
+				className={`group/sort inline-flex cursor-pointer select-none items-center gap-1 outline-none hover:text-foreground focus-visible:text-foreground ${align === 'right' ? 'flex-row-reverse' : ''
+					}`}
+			>
+				{label}
+				<Icon className={`size-3 ${isActive ? 'text-foreground' : 'text-muted-foreground/50'}`} />
+			</button>
+		</TableHead>
+	)
+}
+
 function DeviceRow({
 	device: d,
 	stats,
+	history,
 	role,
 	send,
 }: {
 	device: Device
 	stats?: Stats
-	role: 'self' | 'gateway' | 'host'
+	history?: number[]
+	role: Role
 	send: (cmd: Command) => void
 }) {
 	const [down, setDown] = useState<string>(d.throttle?.down_kbps?.toString() ?? '')
@@ -227,6 +326,26 @@ function DeviceRow({
 			</TableCell>
 			<TableCell className="mono text-right text-xs tabular-nums">{stats ? fmtByteRate(stats.down_bps) : '—'}</TableCell>
 			<TableCell className="mono text-right text-xs tabular-nums">{stats ? fmtByteRate(stats.up_bps) : '—'}</TableCell>
+			<TableCell className="py-2">
+				{role === 'gateway' ? null : stats && (stats.down_total > 0 || stats.up_total > 0) ? (
+					<Tooltip disableHoverablePopup>
+						<TooltipTrigger render={<span className="inline-flex cursor-default" />}>
+							<Sparkline values={history ?? []} />
+						</TooltipTrigger>
+						<TooltipContent>
+							<span className="grid grid-cols-[auto_auto] items-baseline gap-x-4 gap-y-0.5">
+								<span className="col-span-2 mb-2 text-muted-foreground">Since intercepted</span>
+								<span>↓ Downloaded</span>
+								<span className="mono justify-self-end tabular-nums">{fmtBytes(stats.down_total)}</span>
+								<span>↑ Uploaded</span>
+								<span className="mono justify-self-end tabular-nums">{fmtBytes(stats.up_total)}</span>
+							</span>
+						</TooltipContent>
+					</Tooltip>
+				) : (
+					<Sparkline values={history ?? []} />
+				)}
+			</TableCell>
 			<TableCell>
 				{role === 'self' && <Badge variant="secondary">this machine</Badge>}
 				{role === 'gateway' && <Badge variant="default">gateway</Badge>}
