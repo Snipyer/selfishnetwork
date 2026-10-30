@@ -9,7 +9,7 @@ device off the internet entirely, or **throttle** it to a bandwidth limit you
 choose. All from a simple desktop app, no command line required. Runs on
 **Linux** and **Windows**.
 
-![SelfishNetwork device table](docs/screenshot.png)
+![SelfishNetwork device table](docs/screenshot.webp)
 
 ## What it does
 
