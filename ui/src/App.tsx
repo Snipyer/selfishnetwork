@@ -1,6 +1,7 @@
-import { RadarIcon, TriangleAlertIcon, OctagonAlertIcon, SunIcon, MoonIcon, MinusIcon, SquareIcon, XIcon } from 'lucide-react'
+import { RadarIcon, TriangleAlertIcon, OctagonAlertIcon, SunIcon, MoonIcon, MinusIcon, SquareIcon, XIcon, ArrowUpCircleIcon } from 'lucide-react'
 import { useCore } from './lib/useCore'
 import { useTheme } from './lib/useTheme'
+import { useUpdateCheck } from './lib/useUpdateCheck'
 import { shell, CORE_URL } from './lib/shell'
 import { cn } from './lib/utils'
 import { DeviceTable } from './components/DeviceTable'
@@ -13,17 +14,31 @@ import appIcon from './assets/app-icon.png'
 export default function App() {
 	const { state, send } = useCore()
 	const { theme, toggleTheme } = useTheme()
+	const { latestVersion, releaseUrl } = useUpdateCheck()
 	const hostCount = state.devices.filter((d) => d.ip !== state.self?.ip && d.ip !== state.gateway?.ip).length
 
 	return (
 		<TooltipProvider>
 			<div className="flex h-screen flex-col bg-background text-foreground">
 				<header className="border-b border-border">
-					<div className="flex h-9 items-center px-2" data-tauri-drag-region>
-						<div className="flex flex-1 items-center justify-center gap-2" data-tauri-drag-region>
+					<div className="relative flex h-9 items-center px-2" data-tauri-drag-region>
+						<div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2" data-tauri-drag-region>
 							<img src={appIcon} alt="SelfishNetwork" className="size-4" />
 							<span className="text-xs font-medium tracking-tight">SelfishNetwork</span>
 						</div>
+						{/* spacer keeps the button + window controls pushed to the right */}
+						<div className="flex-1" data-tauri-drag-region />
+						{latestVersion && (
+							<button
+								type="button"
+								onClick={() => shell.openExternal(releaseUrl)}
+								title={`Version ${latestVersion} is available — open the release page`}
+								className="mr-1 flex items-center gap-1 rounded-sm text-xs font-medium text-green-500 transition-colors hover:text-green-400"
+							>
+								<ArrowUpCircleIcon className="size-3.5" />
+								New update available!
+							</button>
+						)}
 						<div className="flex items-center gap-1">
 							<Button
 								variant="ghost"
@@ -78,7 +93,7 @@ export default function App() {
 							</span>{' '}
 							discovered
 						</div>
-					)}
+						)}
 				</header>
 
 				<main className="flex-1 overflow-auto p-6">
@@ -100,17 +115,17 @@ export default function App() {
 										</code>
 										.{' '}
 									</>
-								)}
+						)}
 								Retrying…
 							</AlertDescription>
 						</Alert>
-					)}
+						)}
 					{state.lastError && (
 						<Alert variant="destructive" className="mb-4">
 							<OctagonAlertIcon />
 							<AlertDescription>{state.lastError}</AlertDescription>
 						</Alert>
-					)}
+						)}
 
 					<DeviceTable
 						devices={state.devices}
