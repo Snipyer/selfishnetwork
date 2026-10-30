@@ -7,6 +7,7 @@ import { DeviceTable } from './components/DeviceTable'
 import { Button } from './components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from './components/ui/alert'
 import { TooltipProvider } from './components/ui/tooltip'
+import { Toaster } from './components/ui/sonner'
 import appIcon from './assets/app-icon.png'
 
 export default function App() {
@@ -114,11 +115,13 @@ export default function App() {
 					<DeviceTable
 						devices={state.devices}
 						stats={state.stats}
+						history={state.history}
 						selfIp={state.self?.ip}
 						gatewayIp={state.gateway?.ip}
 						send={send}
 					/>
 				</main>
+				<Toaster theme={theme} position="bottom-right" />
 			</div>
 		</TooltipProvider>
 	)
