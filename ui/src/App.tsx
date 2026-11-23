@@ -5,11 +5,15 @@ import { useUpdateCheck } from './lib/useUpdateCheck'
 import { shell, CORE_URL } from './lib/shell'
 import { cn } from './lib/utils'
 import { DeviceTable } from './components/DeviceTable'
-import { Button } from './components/ui/button'
+import { Button, buttonVariants } from './components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from './components/ui/alert'
-import { TooltipProvider } from './components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/ui/tooltip'
 import { Toaster } from './components/ui/sonner'
+import { SupportBanner } from './components/SupportBanner'
+import { GITHUB_URL, KOFI_URL } from './lib/links'
 import appIcon from './assets/app-icon.png'
+import { GithubMark } from './components/GithubMark'
+import kofiIcon from './assets/kofi.webp'
 
 export default function App() {
 	const { state, send } = useCore()
@@ -25,6 +29,29 @@ export default function App() {
 						<div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2" data-tauri-drag-region>
 							<img src={appIcon} alt="SelfishNetwork" className="size-4" />
 							<span className="text-xs font-medium tracking-tight">SelfishNetwork</span>
+						</div>
+						<div className="relative flex items-center gap-1">
+							<Tooltip>
+								<TooltipTrigger
+									aria-label="Star us on GitHub"
+									className={buttonVariants({ variant: 'outline', size: 'xs', className: 'rounded-md font-semibold' })}
+									onClick={() => shell.openExternal(GITHUB_URL)}
+								>
+									<GithubMark data-icon="inline-start" className="size-3.5" />
+									Star
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Star us on GitHub</TooltipContent>
+							</Tooltip>
+							<Tooltip>
+								<TooltipTrigger
+									aria-label="Support the dev"
+									className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
+									onClick={() => shell.openExternal(KOFI_URL)}
+								>
+									<img src={kofiIcon} alt="" className="kofi-icon size-4 object-contain" />
+								</TooltipTrigger>
+								<TooltipContent side="bottom">Support the dev</TooltipContent>
+							</Tooltip>
 						</div>
 						{/* spacer keeps the button + window controls pushed to the right */}
 						<div className="flex-1" data-tauri-drag-region />
@@ -136,6 +163,7 @@ export default function App() {
 						send={send}
 					/>
 				</main>
+				<SupportBanner />
 				<Toaster theme={theme} position="bottom-right" />
 			</div>
 		</TooltipProvider>

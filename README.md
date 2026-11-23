@@ -4,6 +4,8 @@
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-blue)
 [![Downloads](https://img.shields.io/github/downloads/Snipyer/selfishnetwork/total)](https://github.com/Snipyer/selfishnetwork/releases)
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S8J22B5N6K)
+
 See every device on your local network and take control of it — **cut** a
 device off the internet entirely, or **throttle** it to a bandwidth limit you
 choose. All from a simple desktop app, no command line required. Runs on

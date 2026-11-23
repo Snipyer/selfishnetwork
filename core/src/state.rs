@@ -102,7 +102,10 @@ impl App {
 
     /// Set or clear a nickname for a device by MAC, persist it.
     pub fn set_nickname(&self, mac: &str, nickname: Option<String>) -> Option<Device> {
-        let trimmed = nickname.as_ref().map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        let trimmed = nickname
+            .as_ref()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty());
         {
             let mut nicknames = self.nicknames.lock().unwrap();
             if let Some(ref n) = trimmed {
@@ -122,11 +125,6 @@ impl App {
             }
         }
         updated
-    }
-
-    /// Get device by IP
-    pub fn get_device(&self, ip: &Ipv4Addr) -> Option<Device> {
-        self.devices.lock().unwrap().get(ip).cloned()
     }
 
     /// Publish an event to all connected clients.
